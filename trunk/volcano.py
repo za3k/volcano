@@ -7,20 +7,24 @@ import math
 
 DEBUG=True              # Gives extra info on the status line
 WIZARDKEYS=True         # ? toggles omniscience, . toggles timefreeze
-OMNISCIENT=False        # See everything, hear every message
+OMNISCIENT=True         # See everything, hear every message
 TIMEFREEZE=False        # Lava and monsters cannot move
-GODLYMIGHT=True         # Start with 50 of everything
+GODLYMIGHT=False        # Start with 50 of everything
 LAVAMUNITY=False        # Lava does not hurt you
-AMNESIA=False           # Don't show previously seen areas
+JUGGERNAUT=True         # Walk through walls
+TELEPORTER=True         # < moves you to the up staircase.
+FORGETSEEN=False        # Don't show previously seen areas
+
 FULLVIEW=False          # LOS is complete, not within 8 squares
 
 DEATHVIEW=False         # True the true state of anything you've seen
 DEATHMAGMA=False        # Lava travels fast offscreen when you're dead
 
-lavaspeed = 0.8
+lavaspeed = 0
+hungerturns = 50
 
 programName="Volcano"
-programVersion="0.0.5 (beta)"
+programVersion="0.0.6 (beta)"
 
 #initialization
 screen=curses.initscr()
@@ -119,10 +123,14 @@ def clearmessage():
         clearline(line)
 
 statusLine=LINES-1
-def setstatusline(str):
+def setstatusline(tokens):
     clearline(statusLine)
-    screen.addstr(statusLine, 0, str[0:COLUMNS])
-
+    x=0
+    for attr,s in tokens:
+        screen.addch(statusLine, x, attr.ascii, attr.color)
+        x+=1
+        screen.addstr(statusLine, x, s)
+        x+=len(s)
 def getkey():
     return screen.getch()
     
@@ -298,12 +306,9 @@ class level:
     items = {}
     monsters = {}
     stairs = {}
-    depth=0
     full=False
     cachedupstair=None
-    def __init__(self, depth, stairsup, stairsdown, special):
-        #level generation
-        self.depth=depth
+    def __init__(self, items, monsters, stairsup, stairsdown, special):
         #map generation
         self.floormap=[[ERROR_SYMB for x in range(mapWidth)] for y in range(mapHeight)]
         self.knownmap=[[UNKNOWN for x in range(mapWidth)] for y in range(mapHeight)]
@@ -312,6 +317,42 @@ class level:
                 #print x,y
                 self.floormap[y][x]=GRASS
                 self.seen((x,y))
+        elif SPIRAL in special:
+            for y in range(mapHeight):
+                self.floormap[y][0]=OUTER_WALL
+                self.floormap[y][mapWidth-1]=OUTER_WALL
+            for x in range(1,mapWidth-1):
+                self.floormap[0][x]=OUTER_WALL
+                self.floormap[mapHeight-1][x]=OUTER_WALL
+                for y in range(1,mapHeight-1):
+                    self.floormap[y][x]=WALL
+            def nextDir(dire):
+                if dire==(0,-1): return (-1,0)
+                elif dire==(-1,0): return (0,1)
+                elif dire==(0,1): return (1,0)
+                else: return (0,-1)
+            direction=(0,1)
+            lastlen=100
+            thislen=0
+            point=(1,1)
+            while lastlen>1:
+                #print point, curlength,maxlength
+                self.floormap[point[1]][point[0]]=EMPTY_SPACE
+                testpoint=(point[0]+2*direction[0],point[1]+2*direction[1])
+                turn=True
+                if 0<=testpoint[0]<mapWidth and 0<=testpoint[1]<mapHeight:
+                    if self.solid(testpoint):
+                        print "!"
+                        point=(point[0]+direction[0],point[1]+direction[1])
+                        thislen+=1
+                        turn=False
+                if turn:
+                    print "?"
+                    print direction
+                    direction = nextDir(direction)
+                    print direction
+                    lastlen=thislen
+                    thislen=0
         else:
             #outside walls
             for y in range(mapHeight):
@@ -434,16 +475,12 @@ class level:
             
         #item generation
         self.items={}
-        if NOITEMS not in special:
-            for i in range(5):
-                randomItem = random.choice((FOOD,POTION,MONEY,WEAPON,ARMOR,GEM))
-                self.additem(randomItem)
+        for i in items:
+            self.additem(i)
         #monster generation
         self.monsters={}
-        if NOMONSTERS not in special:
-            for i in range(2):
-                randomMonster = inttomonster(3)
-                self.addmonster(randomMonster)
+        for m in monsters:
+            self.addmonster(m)
         #stair placement
         self.stairs={}
         for pair in [(x, UP_STAIR) for x in stairsup] + \
@@ -535,7 +572,7 @@ class level:
         else:
             return True
     def seen(self,square):
-        if not AMNESIA:
+        if not FORGETSEEN:
             x,y=square
             if square in self.items:
                 self.knownmap[y][x]=itemsymbol(self.item(square))
@@ -627,6 +664,7 @@ class character:
     state = {MAXHP:0, HP:0, POINT:0, TURN:0, MONEY:0, FOOD:0, GEM:0, WEAPON:0, ARMOR:0, POTION:0, SCROLL:0}
     alive=True
     killer = None
+    hunger = 0
     def __init__(self):
         self.addItem(MAXHP,3)
         self.addItem(FOOD)
@@ -637,6 +675,7 @@ class character:
             self.addItem(WEAPON,50)
             self.addItem(ARMOR,50)
         self.addScore(1) #for living
+        hunger=0
     def addItem(self, item, amount=1):
         if item in self.state:
             if item==HP:
@@ -652,7 +691,7 @@ class character:
                 message("You die.")
         else:
             print "Error, that is not a valid item"
-    def removeItem(self,item,amount):
+    def removeItem(self,item,amount=1):
         self.addItem(item, -amount)
     def power(self):
         return max(1, self.state[WEAPON])
@@ -669,6 +708,27 @@ class character:
     def setKiller(self, killerSymb):
         if self.alive:
             self.killer=killerSymb
+    def update(self):
+        self.hunger += 1
+        if self.hunger >= hungerturns:
+            if self.state[FOOD] <= 0:
+                if self.state[SCROLL] <= 0:
+                    self.alive=False
+                    self.addScore(-1)
+                    message("You starve to death.")
+                else:
+                    self.hunger -= hungerturns
+                    self.removeItem(SCROLL)
+            else:
+                self.hunger -= hungerturns
+                self.removeItem(FOOD)
+        while self.state[HP] < self.state[MAXHP] and self.state[POTION] > 0:
+            self.removeItem(POTION)
+            self.addItem(HP)
+        while self.state[HP] < self.state[MAXHP] and self.state[SCROLL] > 0:
+            self.removeItem(SCROLL)
+            self.addItem(HP)
+        self.addItem(TURN)
 
 hero = character()
 def heroPresent(square):
@@ -690,23 +750,21 @@ def printhero():
 
 idealTokenLength = COLUMNS // len(hero.state)
 if DEBUG:
-    idealTokenLength=0
+    idealTokenLength=5
 def printstatus():
-    pieces=[]
-    spacer = " "
+    pieces=[]    
     for elt, val in hero.state.items():
-        token="_ " + pprint.pformat(val)
-        token += " " * max(0, idealTokenLength-len(token))
+        token=(itemsymbol(elt), ": " + pprint.pformat(val))
+        token=(token[0],token[1]+" " * max(0, idealTokenLength-len(token[1])-1))
         pieces.append(token)
     if pieces==[]:
         print "error, no status line"
     else:
-        line = ''.join(pieces)
         if DEBUG:
-            line = line + " L" + pprint.pformat(hero.level)
-            line = line + " X" + pprint.pformat(hero.pos[0])
-            line = line + " Y" + pprint.pformat(hero.pos[1])
-        setstatusline(line)
+            pieces.append((symbol("L"), ": " + pprint.pformat(hero.level)))
+            pieces.append((symbol("X"), ": " + pprint.pformat(hero.pos[0])))
+            pieces.append((symbol("Y"), ": " + pprint.pformat(hero.pos[1])))
+    setstatusline(pieces)
 
 herocansee=set()
 herocannotsee=set()
@@ -827,16 +885,16 @@ moveVectors = {
  WAIT:(0,0,0)
  }
 
-OUTSIDE,NOITEMS,NOMONSTERS,LAVASOURCE=range(4)
+OUTSIDE,NOITEMS,NOMONSTERS,LAVASOURCE,SPIRAL=range(5)
 dungeon = {
-    OUTSIDE:level(depth=0, stairsup=[], stairsdown=["top"], special=[NOITEMS,NOMONSTERS,OUTSIDE]),
-    "top":level(depth=1, stairsup=[OUTSIDE], stairsdown=["middle"], special=[]),
-    "middle":level(depth=1, stairsup=["top"], stairsdown=["bottom"], special=[LAVASOURCE]),
-    "bottom":level(depth=1, stairsup=["middle"], stairsdown=[], special=[]),
+    OUTSIDE:level(items=[], monsters=[], stairsup=[], stairsdown=["top"], special=[OUTSIDE]),
+    "top":level(items=[], monsters=[], stairsup=[OUTSIDE], stairsdown=["middle"], special=[]),
+    "middle":level(items=[POTION,SCROLL], monsters=[monster("b")], stairsup=["top"], stairsdown=["bottom"], special=[]),
+    "bottom":level(items=[], monsters=[], stairsup=["middle"], stairsdown=[], special=[LAVASOURCE]),
 }
 curindex = "middle"
 curlevel = dungeon[curindex]
-lava.level="middle"
+lava.level="bottom"
 
 def sight(level,space,mess):
     if hero.level == level:
@@ -957,7 +1015,7 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
             flagsquare(hero.pos)
             if vector[2] == 0:
                 newPos=(hero.pos[0] + vector[0],hero.pos[1] + vector[1])
-                if curlevel.solid(newPos):
+                if curlevel.solid(newPos) and not JUGGERNAUT:
                     message("Ouch!")
                     continue
                 else:
@@ -1010,6 +1068,9 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
                     else:
                         print "Bad stairs from level ", targetindex, " to level ", curindex
                         continue
+                elif TELEPORTER and vector[2]==1:
+                    message("You teleport.")
+                    hero.pos = curlevel.stairup()
                 else:
                     message("You can't walk that way.")
                     continue
@@ -1021,7 +1082,7 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
     else:
         print "Error, illegal action."
         break
-    hero.addItem(TURN) #Add a turn
+    hero.update()
     #Level actions
     if not TIMEFREEZE:
         spreadzombies()
