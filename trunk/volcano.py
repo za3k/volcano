@@ -7,7 +7,7 @@ import math
 
 DEBUG=True              # Gives extra info on the status line
 WIZARDKEYS=True         # ? toggles omniscience, . toggles timefreeze
-OMNISCIENT=False        # See everything, hear every message
+OMNISCIENT=True         # See everything, hear every message
 TIMEFREEZE=False        # Lava and monsters cannot move
 GODLYMIGHT=True         # Start with 50 of everything
 LAVAMUNITY=False        # Lava does not hurt you
@@ -19,12 +19,14 @@ FULLVIEW=False          # LOS is complete, not within 8 squares
                         # The following are set to true _after death_ always.
 DEATHVIEW=False         # True the true state of anything you've seen
 DEATHMAGMA=False        # Lava travels fast offscreen when you're dead
+RUMBLEOFF=False         # If the player escapes the dungeon, stop showing
+                        # the message after the first time
 
 lavaspeed = 0           # Speed at which the lava moves
-hungerturns = 200       # Number of turns before the player consumes a food
+hungerturns = 400       # Number of turns before the player consumes a food
 
 programName="Volcano"
-programVersion="0.0.6 (beta)"
+programVersion="0.0.8 (beta)"
 
 # Volcano
 # 
@@ -39,7 +41,7 @@ programVersion="0.0.6 (beta)"
 # To walk in place press spacebar, period, or 5 (center) on the numpad.
 # To attack monsters, the player moves "into" them.  To go up or down stairs,
 # the player presses < and > respectively.  The dungeon steadily branches
-# as it gets deeper.  The maximum depth of the dungeon is 8.
+# as it gets deeper.  The maximum depth of the dungeon is 6.
 # Help/version is via the ? key.
 # 
 # Monsters
@@ -264,8 +266,8 @@ MAXHP,HP,POINT,TURN,MONEY,FOOD,GEM,WEAPON,ARMOR,POTION,SCROLL = range(11)
 itemDict = {
     MAXHP:symbol("@", ALERT_COLOR),
     HP:symbol("#", ALERT_COLOR),
-    POINT:symbol("P", ALERT_COLOR),
-    TURN:symbol("T", ALERT_COLOR),
+    POINT:symbol("P", WHITE),
+    TURN:symbol("T", WHITE),
     MONEY:symbol("$", YELLOW),
     FOOD:symbol("%", BROWN),
     GEM:symbol("*", ALERT_COLOR),
@@ -327,8 +329,8 @@ monsterDict = {
     "pard": WHITE,
     "quip": WHITE,
     "rukh": WHITE,
-    "slime": WHITE,
-    "troll": WHITE,
+    "slime": GREEN,
+    "troll": GREEN,
     "umbra": WHITE,
     "virus": WHITE,
     "wyvern": WHITE,
@@ -434,15 +436,15 @@ class level:
                 turn=True
                 if 0<=testpoint[0]<mapWidth and 0<=testpoint[1]<mapHeight:
                     if self.solid(testpoint):
-                        print "!"
+                        #print "!"
                         point=(point[0]+direction[0],point[1]+direction[1])
                         thislen+=1
                         turn=False
                 if turn:
-                    print "?"
-                    print direction
+                    #print "?"
+                    #print direction
                     direction = nextDir(direction)
-                    print direction
+                    #print direction
                     lastlen=thislen
                     thislen=0
         else:
@@ -759,7 +761,6 @@ class character:
     hunger = 0
     def __init__(self):
         self.addItem(MAXHP,3)
-        self.addItem(FOOD)
         self.addItem(WEAPON)
         self.addItem(ARMOR)
         if GODLYMIGHT:
@@ -768,6 +769,7 @@ class character:
             self.addItem(ARMOR,50)
         self.addScore(1) #for living
         hunger=0
+        self.addScore(-6) #starting weapon, armor, 
     def addItem(self, item, amount=1):
         if item in self.state:
             if item==HP:
@@ -982,16 +984,104 @@ moveVectors = {
  WAIT:(0,0,0)
  }
 
+#random depth 8 minimal dungeon
+dungeonbase = random.choice([
+    (((), ((), ((((), ()), ()), ((((), ()), ((), ())), (((), ()), ((), ())))))),),
+    ((((), ()), ((((), ()), ()), ((((), ()), ((), ())), (((), ()), ((), ()))))),),
+])
+def twist(plan): # 2 or less things at each branch
+    #if len(plan) < 2:
+    #    return plan
+    #elif len(plan) == 2:
+    #    if random.choice([True, False]):
+    #        return (twist(plan[0]), twist(plan[1]))
+    #    else:
+    #        return (twist(plan[1]), twist(plan[0]))
+    return plan
+def label(plan, prefix=""):
+    if len(plan)==0:
+        return [prefix,]
+    elif len(plan)==1:
+        return [prefix, label(plan[0], prefix+"S")]
+    else:
+        return [prefix, label(plan[0], prefix+"a"), label(plan[1], prefix+"b")]
+dungeonplan = label(twist(dungeonbase), "")
 OUTSIDE,NOITEMS,NOMONSTERS,LAVASOURCE,SPIRAL=range(5)
-dungeon = {
-    OUTSIDE:level(items=[], monsters=[], stairsup=[], stairsdown=["top"], special=[OUTSIDE]),
-    "top":level(items=[], monsters=[], stairsup=[OUTSIDE], stairsdown=["middle"], special=[]),
-    "middle":level(items=[POTION,SCROLL], monsters=[monster("z"), monster("b")], stairsup=["top"], stairsdown=["bottom"], special=[]),
-    "bottom":level(items=[], monsters=[], stairsup=["middle"], stairsdown=[], special=[LAVASOURCE]),
-}
-curindex = "middle"
+dungeonplan[0] = OUTSIDE
+print dungeonplan
+indices=[]
+def leaves(plan):
+    if len(plan)==1:
+        return [plan[0]]
+    else:
+        indices=[]
+        for subplan in plan[1:]:
+            indices += leaves(subplan)
+        return indices
+def levelsatdepth(plan, depth):
+    if depth == 0:
+        return [plan[0]]
+    else:
+        indices=[]
+        for subplan in plan[1:]:
+            indices += levelsatdepth(subplan, depth-1)
+        return indices
+dungeonplanleaves = leaves(dungeonplan)
+scrolllevel = random.choice(dungeonplanleaves)
+lava.level = random.choice(dungeonplanleaves)
+gemlevels = map ( 
+     lambda depth: random.choice(levelsatdepth(dungeonplan,depth)),
+     range(1,7) #1..6
+     )
+print gemlevels
+
+def monsterAtDepth(depth):
+    while random.choice([True, False]): #Continue a random walk as long as neccessary
+        depth = random.choice([max(depth-1, 1), min(depth+1, 8)])
+    basediff = (depth-1) * 3  + 1
+    difficulty = basediff + random.choice([-1,0,1])
+    return monster(chr(difficulty+ord('a')))
+def itemAtDepth(depth):
+    return random.choice([MAXHP,HP,MONEY,FOOD,WEAPON,ARMOR,POTION])
+def makeDungeon(dungeonplan, depth=0, up=[], dungeon={}):
+    name = dungeonplan[0]
+    subnames = [sublev[0] for sublev in dungeonplan[1:]]
+    monsters = []
+    items = []
+    #18 points per level
+    #9 for monsters
+    #9 for items
+    special = []
+    if depth == 0:
+        special.append(OUTSIDE)
+    else:
+        for x in xrange(9):
+            monsters.append(monsterAtDepth(depth))
+        for x in xrange(9):
+            items.append(itemAtDepth(depth))
+    if name in gemlevels:
+        items.append(GEM)
+    if name == lava.level:
+        special.append(LAVASOURCE)
+    if name == scrolllevel:
+        special.append(SPIRAL)
+        items.append(SCROLL)
+    if special!=[]:
+        print name, depth, special
+    dungeon[name]=level(items=items, monsters=monsters, stairsup=up, stairsdown=subnames, special=special)
+    for sublev in dungeonplan[1:]:
+        dungeon = makeDungeon(sublev, depth+1, [name], dungeon)
+    return dungeon
+
+dungeon=makeDungeon(dungeonplan)
+#dungeon = {
+#    OUTSIDE:level(items=[], monsters=[], stairsup=[], stairsdown=["top"], special=[OUTSIDE]),
+#    "top":level(items=[], monsters=[], stairsup=[OUTSIDE], stairsdown=["middle"], special=[]),
+#    "middle":level(items=[], monsters=[], stairsup=["top"], stairsdown=["bottom"], special=[]),
+#    "bottom":level(items=[], monsters=[], stairsup=["middle"], stairsdown=[], special=[LAVASOURCE]),
+#}
+curindex = dungeonplan[1][0] #name of the first level other than the outside one
 curlevel = dungeon[curindex]
-lava.level="bottom"
 
 def sight(level,space,mess):
     if hero.level == level:
@@ -1037,8 +1127,13 @@ def lavamove():
         del lavalevel.stairs[upstair]
         lavalevel=dungeon[lava.level]
         if hero.alive: #when a level is destroyed by lava
-            if hero.level == OUTSIDE:
-                message("The ground rumbles.")
+            global RUMBLEOFF
+            if hero.level == OUTSIDE: 
+                if not RUMBLEOFF:
+                    message("The ground rumbles.")
+                    RUMBLEOFF=True
+                #else:
+                #    message(".")
             else:
                 message("It gets warmer.")
         if lava.level != OUTSIDE:
@@ -1259,12 +1354,12 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
         updatelava()
     printheroarea()
 
-message("Press any key to continue.")
+#message("Press any key to continue.")
 printstatus()
 printheroarea()
 printhero()
 update()
-anykey()
+#anykey()
 
 if (not action==QUIT) and (not TIMEFREEZE):
     DEATHVIEW=True
