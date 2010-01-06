@@ -3,21 +3,24 @@ import curses.ascii
 import pprint
 import random
 import copy
+import math
 
-WIZARDKEYS=True
-OMNISCIENT=False
-TIMEFREEZE=False
-GODLYMIGHT=True
-LAVAMUNITY=False
-debug=True
+DEBUG=True              # Gives extra info on the status line
+WIZARDKEYS=True         # ? toggles omniscience, . toggles timefreeze
+OMNISCIENT=False        # See everything, hear every message
+TIMEFREEZE=False        # Lava and monsters cannot move
+GODLYMIGHT=True         # Start with 50 of everything
+LAVAMUNITY=False        # Lava does not hurt you
+AMNESIA=False           # Don't show previously seen areas
+FULLVIEW=False          # LOS is complete, not within 8 squares
+
+DEATHVIEW=False         # True the true state of anything you've seen
+DEATHMAGMA=False        # Lava travels fast offscreen when you're dead
+
+lavaspeed = 0.8
 
 programName="Volcano"
-programVersion="0.0.4 (beta)"
-
-debid=0
-def setid(x):
-    global debid
-    debid=x
+programVersion="0.0.5 (beta)"
 
 #initialization
 screen=curses.initscr()
@@ -33,7 +36,6 @@ def color_to_pair(color):
 def color_to_attr(col):
         return curses.color_pair(color_to_pair(col))
 #color definitions
-
 WHITE = color_to_attr(curses.COLOR_WHITE) + curses.A_BOLD
 GRAY = GREY = color_to_attr(curses.COLOR_WHITE)
 BOLD_RED = color_to_attr(curses.COLOR_RED) + curses.A_BOLD
@@ -134,20 +136,21 @@ class symbol:
         else:
             print "Error in symbol: invalid character or string"
 
-def printsymb(x, y, symb):
+def printsymb(square, symb):
+    x,y=square
     if curses.has_colors():
         screen.addch(LINES-y-2, x, symb.ascii, symb.color)
     else:
         screen.addch(LINES-y-2, x, symb.ascii)
 
 mapWidth = COLUMNS
-mapHeight = LINES-messLines-1    
+mapHeight = LINES-messLines-1
 
 #define tiles
-UNKNOWN = symbol("?", WHITE)
+UNKNOWN = symbol(" ", WHITE)
 EMPTY_SPACE = symbol(".", GRAY)
 GRASS = symbol(".", GREEN)
-WALL = symbol("#", WHITE)
+WALL = symbol("#", GRAY)
 OUTER_WALL = symbol("#", GRAY)
 UP_STAIR = symbol("<", WHITE)
 DOWN_STAIR = symbol(">", WHITE)
@@ -160,28 +163,55 @@ ERROR_SYMB=symbol("?", ALERT_COLOR)
 
 mapPositions=[(x, y) for x in range(mapWidth) for y in range(mapHeight)]
 
-itemList = {
-    "%":BROWN,
-    "$":YELLOW,
-    "*":ALERT_COLOR,
-    "(":GRAY,
-    "[":GRAY,
-    "!":BOLD_BLUE,
+MAXHP,HP,POINT,TURN,MONEY,FOOD,GEM,WEAPON,ARMOR,POTION,SCROLL = range(11)
+itemDict = {
+    MAXHP:symbol("@", ALERT_COLOR),
+    HP:symbol("#", ALERT_COLOR),
+    POINT:symbol("P", ALERT_COLOR),
+    TURN:symbol("T", ALERT_COLOR),
+    MONEY:symbol("$", YELLOW),
+    FOOD:symbol("%", BROWN),
+    GEM:symbol("*", ALERT_COLOR),
+    WEAPON:symbol("(", GRAY),
+    ARMOR:symbol("[", GRAY),
+    POTION:symbol("!", BOLD_BLUE),
+    SCROLL:symbol("?", WHITE),
 }
-
-for asc, col in itemList.items():
-    itemList[asc] = symbol(asc, col)
-
 gemColors = (BOLD_GREEN, BOLD_BLUE, BOLD_RED, WHITE, YELLOW, GRAY)
+
 def itemsymbol(itm):
     if itm=="*":
         return symbol("*", gemColors[(curlevel.depth % len(gemColors))])
-    elif itm in itemList:
-        return itemList[itm]
+    elif itm in itemDict:
+        return itemDict[itm]
     else:
-        return symbol(itm)
+        print "Nonexistant item ", itm
 
-monsterList = {
+def itemscore(item):
+    if item==MAXHP:
+        return 1
+    elif item==HP:
+        return 1
+    elif item==MONEY:
+        return 1
+    elif item==FOOD:
+        return 1
+    elif item==GEM:
+        return 2
+    elif item==WEAPON:
+        return 1
+    elif item==ARMOR:
+        return 1
+    elif item==POTION:
+        return 1
+    elif item==SCROLL:
+        return 3
+    else:
+        print "Illegal scoring item"
+        return 0
+
+
+monsterDict = {
     "ant": BROWN,
     "bat": BROWN,
     "cat": BROWN,
@@ -214,26 +244,53 @@ monsterSymbols = {}
 monsterNames={}
 ZOMBIE=26
 
-for name, col in monsterList.items():
-    monsterSymbols[name[0]] = symbol(name[0], col)
-
-for name in monsterList:
-    monsterNames[name[0]] = name #.lower()
+monsterSymbols = {}
+for name, col in monsterDict.iteritems():
+    monsterSymbols[name[0]]=symbol(name[0],col)
+monsterNames = {}
+for name, col in monsterDict.iteritems():
+    monsterNames[name[0]]=name
 
 def monstersymbol(mon):
     if mon in monsterSymbols:
         return monsterSymbols[mon]
     else:
         return symbol(mon)
-
 def monstername(mon):
     if mon in monsterNames:
         return monsterNames[mon]
     else:
-        return "ErrorMonsterName"      
-
+        return "ErrorMonsterName"     
 def inttomonster(int):
     return monster(chr(int + ord("a") - 1))
+
+class monster:
+    hp = 1
+    power = 0
+    asc=None
+    def __init__(self, x):
+        self.asc=x
+        self.hp=ord(x)-ord("a")+1
+        self.power = self.hp
+    def name(self):
+        return monstername(self.asc)
+    def symb(self):
+        return monstersymbol(self.asc)
+    def alive(self):
+        return (self.hp > 0)
+    def getHit(self, actor, power):
+        self.hp -= max(0,power)
+        if actor==hero:
+            message("It has " + pprint.pformat(self.hp) + " HP remaining.")
+        if not self.alive:
+            message("The " + self.name() + " dies.")
+            score(actor, 1)
+    def prefersX(self):
+        return random.choice((True, False))
+    def addScore(self, points):
+        pass
+
+
 
 class level:
     floormap = []
@@ -254,7 +311,7 @@ class level:
             for x,y in mapPositions:
                 #print x,y
                 self.floormap[y][x]=GRASS
-                self.seen(x,y)
+                self.seen((x,y))
         else:
             #outside walls
             for y in range(mapHeight):
@@ -264,15 +321,122 @@ class level:
                 self.floormap[0][x]=OUTER_WALL
                 self.floormap[mapHeight-1][x]=OUTER_WALL
                 for y in range(1,mapHeight-1):
-                    self.floormap[y][x]=EMPTY_SPACE
-            #wall in the middle
-            for y in range(5, 10):
-                self.floormap[y][10] = WALL
+                    self.floormap[y][x]=WALL
+            #Create rooms
+            roomTiles = [(i,EMPTY_SPACE) for i in range(9)]
+            def thirds(a,b):
+                return int(round((b-a)/3+a)),int(round((b-a)*2/3+a))
+            def randomValues(minimum, maximum, minDistance):
+                if abs(minimum-maximum) <= minDistance:
+                    print "Error in randomValues"
+                    return 1,1
+                while 1:
+                    point1 = random.randrange(minimum,maximum)
+                    point2 = random.randrange(minimum,maximum)
+                    if abs(point1-point2) <= minDistance:
+                        continue
+                    else:
+                        return min(point1,point2), max(point1,point2)
+            vertLine1, vertLine2=thirds(1,mapWidth-1)
+            horLine1, horLine2=thirds(1,mapHeight-1)
+            # room is (vertleft vertright horbottom hortop roomindex)
+            rooms=[]
+            #tricks with range insures that the rooms don't touch dividers
+            for topHor, bottomHor in [[1,horLine1], [horLine1,horLine2], [horLine2,mapHeight]]:
+                for leftVert,rightVert in [[1,vertLine1], [vertLine1,vertLine2], [vertLine2,mapWidth]]:
+                    vl,vr = randomValues(leftVert,rightVert,3)
+                    hb,ht = randomValues(topHor,bottomHor,3)
+                    #draw determined room
+                    for x in range(vl,vr):
+                        for y in range(hb,ht):
+                            self.floormap[y][x]=EMPTY_SPACE
+                    rooms.append((vl,vr,hb,ht))
+            #determine corridors to draw
+            connections=[]
+            roomsconnected=range(9) #list of rooms used for calculation
+            roompairs=[(0,1),(1,2), #horizontal
+                       (3,4),(4,5),
+                       (6,7),(7,8),
+                       (0,3),(3,6), #vertical
+                       (1,4),(4,7),
+                       (2,5),(5,8),]
+            while max(roomsconnected) > 0:
+                index=random.randrange(len(roompairs))
+                connection = roompairs[index]
+                del roompairs[index]
+                group1, group2 = sorted([roomsconnected[connection[0]], roomsconnected[connection[1]]])
+                if group1==group2:
+                    continue
+                else:
+                    for room in range(9):
+                        if roomsconnected[room] == group2:
+                            roomsconnected[room] = group1
+                    connections.append(connection)
+            #draw corridors
+            for corridor in connections:
+                room1,room2=rooms[corridor[0]],rooms[corridor[1]]
+                #check about a vertical hallway
+                def drawvert(room1,room2):
+                    vertcommon=list(set(range(room1[0],room1[1])) & set(range(room2[0],room2[1])))
+                    if len(vertcommon)==0:
+                        return False
+                    else:
+                        x=random.choice(vertcommon)
+                        #draw a vertical hallway
+                        bottom,top=sorted((room1[2],room2[2]))
+                        for y in range(bottom+1,top):
+                            self.floormap[y][x]=EMPTY_SPACE
+                        return True
+                #check about a horizontal hallway
+                def drawhoriz(room1,room2):
+                    horizcommon=list(set(range(room1[2],room1[3])) & set(range(room2[2],room2[3])))
+                    if len(horizcommon)==0:
+                        return False
+                    else:
+                        y=random.choice(horizcommon)
+                        #draw a horizontal hallway
+                        left,right=sorted((room1[0],room2[0]))
+                        for x in range(left+1,right):
+                            self.floormap[y][x]=EMPTY_SPACE
+                        return True
+                def drawbroken(room1,room2):
+                    #supposes no orthogonal lines are possible
+                    #xmin,xmax are for the range BETWEEN rooms,
+                    #not the rooms themselves
+                    xmin,xmax,ymin,ymax,minx,miny=None,None,None,None,None,None
+                    if room1[0] > room2[0]: #room1 is left ALWAYS
+                        room1,room2=room2,room1
+                    xmin = random.randrange(room1[0],room1[1])
+                    xmax = random.randrange(room2[0],room2[1])
+                    if room1[2] < room2[2]: #if room1 is bottom
+                        ymin = random.randrange(room1[2],room1[3])
+                        ymax = random.randrange(room2[2],room2[3])
+                        midx,midy=random.choice([(xmin,ymax),(xmax,ymin)])
+                    else:
+                        ymin = random.randrange(room2[2],room2[3])
+                        ymax = random.randrange(room1[2],room1[3])
+                        midx,midy=random.choice([(xmin,ymin),(xmax,ymax)])
+                    for x in range(xmin,xmax+1):
+                        self.floormap[midy][x]=EMPTY_SPACE
+                    for y in range(ymin,ymax+1):
+                        self.floormap[y][midx]=EMPTY_SPACE
+                    self.floormap[midy][midx]=EMPTY_SPACE
+                    return True
+                #put the hallway on the map
+                if random.choice((True,False)):
+                    if not drawvert(room1,room2):
+                        if not drawhoriz(room1,room2):
+                            drawbroken(room1,room2)
+                else:
+                    if not drawhoriz(room1,room2):
+                        if not drawvert(room1,room2):
+                            drawbroken(room1,room2)
+            
         #item generation
         self.items={}
         if NOITEMS not in special:
             for i in range(5):
-                randomItem = random.choice(("%","!","$","(","[","*"))
+                randomItem = random.choice((FOOD,POTION,MONEY,WEAPON,ARMOR,GEM))
                 self.additem(randomItem)
         #monster generation
         self.monsters={}
@@ -301,12 +465,11 @@ class level:
         self.monsters[space]=monster
     def randomSpace(self):
         while 1:
-            x=random.randrange(mapWidth)
-            y=random.randrange(mapHeight)
-            if self.solid(x,y):
+            randSquare=random.randrange(mapWidth),random.randrange(mapHeight)
+            if self.solid(randSquare):
                 continue
             else:
-                return (x,y)
+                return randSquare
     def randomSpecialSpace(self, function):
         def spaceFunc(self2):
             while 1:
@@ -315,73 +478,71 @@ class level:
                     return space
         return spaceFunc
     def randomUnoccupiedSpace(self):
-        return self.randomSpecialSpace(lambda s: not self.isOccupied(s[0],s[1]))(self)
+        return self.randomSpecialSpace(lambda s: not self.isOccupied(s))(self)
     def randomUnfilledSpace(self): 
         return self.randomSpecialSpace(lambda s: s not in self.items)(self)
     def randomFeaturelessSpace(self): 
         return self.randomSpecialSpace(lambda s: s not in self.stairs)(self)
-    def symb(self,x,y):
-        if self.monsterPresent(x,y):
-            return self.monsters[(x,y)].symb()
-        elif self.itemPresent(x,y):
-            return itemsymbol(self.item(x,y))
+    def tile(self, square):
+        return self.floormap[square[1]][square[0]]
+    def setTile(self, square, s):
+        self.floormap[square[1]][square[0]]=s
+    def symb(self,square):
+        if self.monsterPresent(square):
+            return self.monsters[square].symb()
+        elif self.itemPresent(square):
+            return itemsymbol(self.item(square))
         else:
-            return self.floormap[y][x]
-    def limitedsymb(self,x,y):
-        return self.knownmap[y][x]
-    def solid(self, x, y):
-        tile = self.floormap[y][x]
-        if tile==WALL:
-            return True
-        if tile==OUTER_WALL:
-            return True
-        return False
-    def monsterPresent(self, x, y):
-        return (x, y) in self.monsters
-    def hitMonster(self, x, y, actor, power):
-        if self.monsterPresent(x,y):
-            self.monsters[(x,y)].getHit(actor, power)
-            if not self.monsters[(x,y)].alive():
-                del self.monsters[(x,y)]
+            return self.tile(square)
+    def limitedsymb(self,square):
+        if DEATHVIEW and self.wasSeen(square):
+            return self.symb(square)
+        return self.knownmap[square[1]][square[0]]
+    def solid(self, square):
+        return self.tile(square) in (WALL, OUTER_WALL)
+    def monsterPresent(self, square):
+        return square in self.monsters
+    def hitMonster(self, square, actor, power):
+        if self.monsterPresent(square):
+            self.monsters[square].getHit(actor, power)
+            if not self.monsters[square].alive():
+                del self.monsters[square]
         else:
-            print "Error, no monster present on that square (", x, ", ", y, ") "
-    def itemPresent(self, x, y):
-        return (x, y) in self.items
-    def isOccupied(self,x,y):
-        if self.monsterPresent(x,y):
-            return True
-        elif heroPresent(x,y):
-            return True
+            print "Error, no monster present on that square."
+    def itemPresent(self, square):
+        return square in self.items
+    def isOccupied(self,square):
+        return self.monsterPresent(square) or heroPresent(square)
+    def item(self, square):
+        if self.itemPresent(square):
+            return self.items[square]
         else:
-            return False
-    def item(self, x, y):
-        if self.itemPresent(x,y):
-            return self.items[(x, y)]
-        else:
-            print "Illegal item access: item not present at ",x,y
+            print "Illegal item access: item not present."
             return "@"
-    def takeItem(self, x, y, actor):
-        tempItem = self.items[(x,y)]
-        del self.items[(x,y)]
+    def takeItem(self, square, actor):
+        tempItem = self.items[square]
+        del self.items[square]
         actor.addItem(tempItem)
-    def empty(self, x, y):
+    def empty(self, square):
         if self.floormap != EMPTY_SPACE:
             return False
-        elif self.monsterPresent(x,y):
+        elif self.monsterPresent(square):
             return False
-        elif self.itemPresent(x,y):
+        elif self.itemPresent(square):
             return False
-        elif heroPresent(x,y):
+        elif heroPresent(square):
             return False
         else:
             return True
-    def seen(self,x,y):
-        if (x,y) in self.items:
-            self.knownmap[y][x]=itemsymbol(self.item(x,y))
-        else:
-            self.knownmap[y][x]=copy.copy(self.floormap[y][x])
-    def wasSeen(self, x, y):
-        return (not (self.knownmap[y][x]==UNKNOWN))
+    def seen(self,square):
+        if not AMNESIA:
+            x,y=square
+            if square in self.items:
+                self.knownmap[y][x]=itemsymbol(self.item(square))
+            else:
+                self.knownmap[y][x]=copy.copy(self.floormap[y][x])
+    def wasSeen(self, square):
+        return self.knownmap[square[1]][square[0]]!=UNKNOWN
     def stairup(self):
         #assumes there were stairs up
         return self.cachedupstair
@@ -398,79 +559,69 @@ class level:
             print "Too many stairs down"
             return stairset[0]
 
+def testPoint(square):
+    return not curlevel.solid(square)
+#the following code taken from en.literateprograms.org
+#(Brensenham's algorithm for drawing lines using integer arithmetic)
+def testLine(x1,y1,x2,y2):
+    steep = abs(y2 - y1) > abs(x2 - x1)
+    if steep:
+        x1, y1 = y1, x1
+        x2, y2 = y2, x2
+    if x1 > x2:
+        x1, x2 = x2, x1
+        y1, y2 = y2, y1
+    if y1 < y2: 
+        ystep = 1
+    else:
+        ystep = -1
+    deltax = x2-x1
+    deltay = abs(y2-y1)
+    error = -deltax / 2
+    y=y1
+    for x in range(x1, x2+1):
+        if steep:
+            if not testPoint((y,x)):
+                return False
+        else:
+            if not testPoint((x,y)):
+                return False
+        error += deltay
+        if error >= 0:
+            y+=ystep
+            error-=deltax
+    return True
 def LOS(square1,square2):
     x1,y1=square1
     x2,y2=square2
-    if abs(x1-x2) + abs(y1-y2) <= 10:
-        return True
-    else:
+    if (abs(x1-x2)+abs(y1-y2)>8) and not FULLVIEW:
         return False
 
-class monster:
-    hp = 1
-    power = 0
-    asc=None
-    def __init__(self, x):
-        self.asc=x
-        self.hp=ord(x)-ord("a")+1
-        self.power = self.hp
-    def name(self):
-        return monstername(self.asc)
-    def symb(self):
-        x=monstersymbol(asc)
-        return monstersymbol(self.asc)
-    def alive(self):
-        return (self.hp > 0)
-    def getHit(self, actor, power):
-        self.hp -= max(0,power)
-        if actor==hero:
-            message("It has " + pprint.pformat(self.hp) + " HP remaining.")
-        if not self.alive:
-            message("The " + self.name() + " dies.")
-            score(actor, 1)
-    def prefersX(self):
-        return random.choice((True, False))
-    def addScore(self, points):
+    #check to see if, ignoring the endpoints, there's a clear path
+    if x1==x2:
         pass
-
-MAXHP = "@"
-HP = "#"
-POINT = "P"
-TURN = "T"
-MONEY = "$"
-FOOD = "%"
-GEM = "*"
-WEAPON = "("
-ARMOR = "["
-POTION = "!"
-SCROLL = "?"
-
-def itemscore(item):
-    if item==MAXHP:
-        return 1
-    elif item==HP:
-        return 1
-    elif item==MONEY:
-        return 1
-    elif item==FOOD:
-        return 1
-    elif item==GEM:
-        return 2
-    elif item==WEAPON:
-        return 1
-    elif item==ARMOR:
-        return 1
-    elif item==POTION:
-        return 1
-    elif item==SCROLL:
-        return 3
+    elif x1 < x2:
+        x2-=1
+        if x1!=x2:
+            x1+=1
     else:
-        print "Illegal scoring item"
-        return 0
+        x2+=1
+        if x1!=x2:
+            x1-=1
+    if y1==y2:
+        pass
+    elif y1 < y2:
+        y2-=1
+        if y1!=y2:
+            y1+=1
+    else:
+        y2+=1
+        if y1!=y2:
+            y1-=1
+    return testLine(x1,y1,x2,y2)
 
 class character:
-    xpos = 4
-    ypos = 4
+    pos = (4,4)
     level = 1 #dungeon level
     #max hp, min hp, money, food, gems, weapon, armor, points, turns
     state = {MAXHP:0, HP:0, POINT:0, TURN:0, MONEY:0, FOOD:0, GEM:0, WEAPON:0, ARMOR:0, POTION:0, SCROLL:0}
@@ -504,7 +655,7 @@ class character:
     def removeItem(self,item,amount):
         self.addItem(item, -amount)
     def power(self):
-        return max(1, self.state["("])
+        return max(1, self.state[WEAPON])
     def getHit(self,pow,actor):
         if self.alive:
             damage = max(0, pow-self.state[ARMOR])
@@ -520,87 +671,87 @@ class character:
             self.killer=killerSymb
 
 hero = character()
-def heroPresent(x, y):
-    if x==hero.xpos:
-        if y==hero.ypos:
-            return True
-    return False
+def heroPresent(square):
+    return square==hero.pos
 
 def printhero():
     global cursorxpos
     global cursorypos
     
     if hero.alive:
-        printsymb(hero.xpos, hero.ypos, CHAR_SYMB)
+        printsymb(hero.pos, CHAR_SYMB)
     else:
-        if curlevel.floormap[hero.ypos][hero.xpos] in (MAGMA, LAVA):
-            printsymb(hero.xpos, hero.ypos, BURNT_CHAR_SYMB)
+        if curlevel.tile(hero.pos) in (MAGMA, LAVA):
+            printsymb(hero.pos, BURNT_CHAR_SYMB)
         else:
-            printsymb(hero.xpos, hero.ypos, DEAD_CHAR_SYMB)
-    cursorxpos=hero.xpos
-    cursorypos=LINES-hero.ypos-2
+            printsymb(hero.pos, DEAD_CHAR_SYMB)
+    cursorxpos=hero.pos[0]
+    cursorypos=LINES-hero.pos[1]-2
 
 idealTokenLength = COLUMNS // len(hero.state)
-if debug:
+if DEBUG:
     idealTokenLength=0
 def printstatus():
     pieces=[]
     spacer = " "
     for elt, val in hero.state.items():
-        token=elt + ": " + pprint.pformat(val)
+        token="_ " + pprint.pformat(val)
         token += " " * max(0, idealTokenLength-len(token))
         pieces.append(token)
     if pieces==[]:
         print "error, no status line"
     else:
         line = ''.join(pieces)
-        if debug:
+        if DEBUG:
             line = line + " L" + pprint.pformat(hero.level)
-            line = line + " X" + pprint.pformat(hero.xpos)
-            line = line + " Y" + pprint.pformat(hero.ypos)
-            line = line + " I" + pprint.pformat(debid)
+            line = line + " X" + pprint.pformat(hero.pos[0])
+            line = line + " Y" + pprint.pformat(hero.pos[1])
         setstatusline(line)
 
 herocansee=set()
 herocannotsee=set()
 heromaybesees=set()
 def printmap():
-    for x,y in mapPositions:
-        printsymb(x,y, ERROR_SYMB)
-    for x,y in mapPositions:
+    for square in mapPositions:
+        printsymb(square, ERROR_SYMB)
+    for square in mapPositions:
         if OMNISCIENT:
-            printsymb(x,y, curlevel.symb(x,y))
+            printsymb(square, curlevel.symb(square))
         else:
-            printsymb(x,y, curlevel.limitedsymb(x,y))
-    for x,y in getsight(hero.xpos,hero.ypos):
-        printsymb(x,y, curlevel.symb(x,y))
-        curlevel.seen(x,y)
-def getsight(px,py):
-    minx=max(0,px-10)
-    maxx=min(mapWidth-1,px+10)
-    miny=max(0,py-10)
-    maxy=min(mapHeight-1,py+10)
-    possarea = [(x,y) for x in range(minx,maxx+1) for y in range(miny,maxy+1)]
-    actualarea = [square for square in possarea if LOS(square, (px,py))]
-    return set(actualarea)
+            printsymb(square, curlevel.limitedsymb(square))
+    for square in getsight(hero.pos):
+        printsymb(square, curlevel.symb(square))
+        curlevel.seen(square)
+def getsight(psquare):
+    if FULLVIEW:
+        return mapPositions
+    else:
+        px,py=psquare
+        minx=max(0,px-10)
+        maxx=min(mapWidth-1,px+10)
+        miny=max(0,py-10)
+        maxy=min(mapHeight-1,py+10)
+        possarea = [(x,y) for x in range(minx,maxx+1) for y in range(miny,maxy+1)]
+        actualarea = [square for square in possarea if LOS(psquare,square)]
+        return set(actualarea)
 def printheroarea():
     global herocansee
     global herocannotsee
     global heromaybesees
     for square in heromaybesees:
-        if LOS((hero.xpos, hero.ypos), square):
+        if LOS(hero.pos, square):
             herocansee.add(square)
         else:
             herocannotsee.add(square)
     heromaybesees.clear()
-    for x,y in herocansee:
-        curlevel.seen(x,y)
-        printsymb(x,y, curlevel.symb(x,y))
-    for x,y in herocannotsee:
-        printsymb(x,y, curlevel.limitedsymb(x,y))
+    for square in herocansee:
+        curlevel.seen(square)
+        printsymb(square, curlevel.symb(square))
+    for square in herocannotsee:
+        printsymb(square, curlevel.limitedsymb(square))
     if OMNISCIENT:
-        for x,y in mapPositions:
-            printsymb(x,y, curlevel.symb(x,y))
+        for square in mapPositions:
+            printsymb(square, curlevel.symb(square))
     herocannotsee.clear()
     herocansee.clear()
     printhero()
@@ -611,12 +762,10 @@ def flagsquare(square):
 def flagheromove(a,b):
     global herocansee
     global herocannotsee
-    old = getsight(a[0],a[1])
-    new = getsight(b[0],b[1])
+    old = getsight(a)
+    new = getsight(b)
     herocansee |= (new - old)
     herocannotsee |= (old - new)
-
-
 
 class fluidicEntity:
     score=0
@@ -678,46 +827,59 @@ moveVectors = {
  WAIT:(0,0,0)
  }
 
-curindex = "middle"
-
-OUTSIDE="outside"
-NOITEMS="noitems"
-NOMONSTERS="nomonsters"
-LAVASOURCE="lavasource"
+OUTSIDE,NOITEMS,NOMONSTERS,LAVASOURCE=range(4)
 dungeon = {
     OUTSIDE:level(depth=0, stairsup=[], stairsdown=["top"], special=[NOITEMS,NOMONSTERS,OUTSIDE]),
     "top":level(depth=1, stairsup=[OUTSIDE], stairsdown=["middle"], special=[]),
-    "middle":level(depth=3, stairsup=["top"], stairsdown=["bottom"], special=[LAVASOURCE]),
-    "bottom":level(depth=9, stairsup=["middle"], stairsdown=[], special=[]),
+    "middle":level(depth=1, stairsup=["top"], stairsdown=["bottom"], special=[LAVASOURCE]),
+    "bottom":level(depth=1, stairsup=["middle"], stairsdown=[], special=[]),
 }
+curindex = "middle"
 curlevel = dungeon[curindex]
 lava.level="middle"
 
 def sight(level,space,mess):
     if hero.level == level:
-        if LOS((hero.xpos,hero.ypos), space) or OMNISCIENT:
+        if LOS(hero.pos, space) or OMNISCIENT:
             message(mess)
 def adjacent(a,b):
     return abs(a[0]-b[0]) + abs(a[1]-b[1]) == 1
 def spreadzombies():
     pass
-def updatelava():
-    lavalevel=dungeon[lava.level]
-    magmasquares = [(x,y) for x,y in mapPositions if lavalevel.floormap[y][x] == MAGMA]
-    bordersquares = [square for magmaSquare in magmasquares for square in mapPositions if adjacent(square,magmaSquare)]
-    bordersquares = list(set(bordersquares))
-    bordersquares = [(x,y) for x,y in bordersquares if not lavalevel.solid(x,y)]
-    bordersquares = [(x,y) for x,y in bordersquares if not lavalevel.floormap[y][x] in (LAVA, MAGMA)]
 
+lavaCounter=-1
+def updatelava():
+    global lavaCounter
+    lavaCounter+=lavaspeed
+    while lavaCounter > 0:
+        lavaCounter-=1
+        lavamove()
+def lavamove():
+    lavalevel=dungeon[lava.level]
+    magmasquares = [square for square in mapPositions if lavalevel.tile(square) == MAGMA]
+    if DEATHMAGMA:
+        #finish the levels very fast
+        bordersquares = lavalevel.stairs.keys() + lavalevel.items.keys() + lavalevel.monsters.keys()
+    else:
+        bordersquares = [square for magmaSquare in magmasquares for square in mapPositions if adjacent(square,magmaSquare)]
+        bordersquares = list(set(bordersquares))
+        bordersquares = [square for square in bordersquares if not lavalevel.solid(square)]
+    bordersquares = [square for square in bordersquares if not lavalevel.tile(square) in (LAVA, MAGMA)]
     if len(bordersquares) == 0:
-        for x,y in magmasquares:
-            flagsquare((x,y))
+        for square in magmasquares:
+            flagsquare(square)
+            x,y=square
             lavalevel.floormap[y][x] = LAVA
         oldlev=lava.level
         upstair = lavalevel.stairup()
         lava.level = lavalevel.stairs[upstair]
         del lavalevel.stairs[upstair]
         lavalevel=dungeon[lava.level]
+        if hero.alive: #when a level is destroyed by lava
+            if hero.level == OUTSIDE:
+                message("The ground rumbles.")
+            else:
+                message("It gets warmer.")
         if lava.level != OUTSIDE:
             if lavalevel.stairdownExists(oldlev):
                 sight(oldlev,dungeon[oldlev].stairup(),"Lava fills the level.")
@@ -725,19 +887,18 @@ def updatelava():
                 del lavalevel.stairs[stairdown]
                 magmify(lava.level,stairdown)
                 sight(lava.level,stairdown,"Lava bubbles up the stairs!")
-                if hero.alive:
-                    message("It gets warmer.")
             else:
                 print "No stairs back down!"
         else:
+            message("The volcano erupts!")
             pass #lava's done
     else:
         stairspresent=[square for square in bordersquares if square in lavalevel.stairs]
-        for x,y in stairspresent:
-            if lavalevel.floormap[y][x] == DOWN_STAIR:
-                magmify(lava.level,(x,y))
-                sight(lava.level, (x,y), "Lava starts pouring down the stairs.")
-                lava.level = lavalevel.stairs[(x,y)]
+        for square in stairspresent:
+            if lavalevel.tile(square) == DOWN_STAIR:
+                magmify(lava.level,square)
+                sight(lava.level, square, "Lava starts pouring down the stairs.")
+                lava.level = lavalevel.stairs[square]
                 lavalevel=dungeon[lava.level]
                 upstairssquare=lavalevel.stairup()
                 magmify(lava.level,upstairssquare)
@@ -745,33 +906,32 @@ def updatelava():
                 return
         for square in bordersquares:
             magmify(lava.level,square)
-        for x,y in magmasquares:
+        for square in magmasquares:
             if lava.level==hero.level:
-                flagsquare((x,y))
+                flagsquare(square)
+            x,y=square
             lavalevel.floormap[y][x] = LAVA
 def magmify(levelname,square):
     #assuption: not a down staircase, not solid
     level=dungeon[levelname]
     x,y=square
     level.floormap[y][x] = MAGMA
-    if hero.alive and levelname==hero.level and (x,y) == (hero.xpos, hero.ypos):
+    if hero.alive and levelname==hero.level and square == hero.pos:
         if not LAVAMUNITY:
             message("You are cremated.")
             hero.getHit(255,lava)
-    if level.itemPresent(x,y):
+    if level.itemPresent(square):
         sight(levelname, square, "The object is incinerated.")
-        level.takeItem(x,y,lava)
-    if level.monsterPresent(x,y):
-        mname=level.monsters[(x,y)].name()
+        level.takeItem(square,lava)
+    if level.monsterPresent(square):
+        mname=level.monsters[square].name()
         sight(levelname, square, "The " + mname + " is roasted.")
-        level.hitMonster(x,y,lava,255)
+        level.hitMonster(square,lava,255)
     if levelname==hero.level:
         flagsquare(square)
 
-
-hero.level=curindex
-hero.xpos, hero.ypos = curlevel.stairup()
-
+hero.level = curindex
+hero.pos = curlevel.stairup()
 message("You enter the volcano.")
 printmap()
 printheroarea()
@@ -794,65 +954,61 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
     elif action in moveVectors:
         vector = moveVectors[action]
         if action != WAIT:
-            flagsquare((hero.xpos,hero.ypos))
+            flagsquare(hero.pos)
             if vector[2] == 0:
-                newxPos = hero.xpos + vector[0]
-                newyPos = hero.ypos + vector[1]
-                if curlevel.solid(newxPos,newyPos):
+                newPos=(hero.pos[0] + vector[0],hero.pos[1] + vector[1])
+                if curlevel.solid(newPos):
                     message("Ouch!")
                     continue
                 else:
-                    flagsquare((newxPos,newyPos))
-                    if curlevel.monsterPresent(newxPos, newyPos):
+                    flagsquare(newPos)
+                    if curlevel.monsterPresent(newPos):
                         #hit the monster
-                        mname=curlevel.monsters[(newxPos,newyPos)].name()
+                        mname=curlevel.monsters[newPos].name()
                         message("You hit the " + mname + " for "+pprint.pformat(hero.power())+" damage.")
-                        curlevel.hitMonster(newxPos, newyPos, hero, hero.power())
-                        if (newxPos,newyPos) not in curlevel.monsters:
+                        curlevel.hitMonster(newPos, hero, hero.power())
+                        if newPos not in curlevel.monsters:
                             message("It dies.")
                     else:
-                        flagheromove((hero.xpos,hero.ypos),(newxPos,newyPos))
-                        hero.xpos = newxPos
-                        hero.ypos = newyPos
-                        if curlevel.floormap[newyPos][newxPos] == MAGMA:
-                            magmify(hero.level, (newxPos,newyPos))
-                        if curlevel.itemPresent(newxPos, newyPos):
-                            curlevel.takeItem(newxPos, newyPos, hero)
+                        flagheromove(hero.pos,newPos)
+                        hero.pos = newPos
+                        if curlevel.tile(newPos) == MAGMA:
+                            magmify(hero.level, newPos)
+                        if curlevel.itemPresent(newPos):
+                            curlevel.takeItem(newPos, hero)
                             message("You pick it up.")
-                            if (hero.xpos, hero.ypos) in curlevel.stairs:
-                                type=curlevel.floormap[newyPos][newxPos]
+                            if hero.pos in curlevel.stairs:
+                                type=curlevel.tile(newPos)
                                 if type==UP_STAIR:
                                     type="up"
                                 else:
                                     type="down"
-                                    message("You discover stairs leading " + type + " underneath.")
+                                message("You discover stairs leading " + type + " underneath.")
             else:
-                herosquare = (hero.xpos, hero.ypos)
-                if herosquare in curlevel.stairs:
-                    stairtype=curlevel.floormap[herosquare[1]][herosquare[0]] 
+                if hero.pos in curlevel.stairs:
+                    stairtype=curlevel.tile(hero.pos)
                     if (vector[2]==1 and stairtype != UP_STAIR) \
                         or (vector[2]==-1 and stairtype != DOWN_STAIR):
                         message("You can't walk that way.")
                         continue
 
                     #attempt to traverse stairs
-                    targetindex = curlevel.stairs[herosquare]
+                    targetindex = curlevel.stairs[hero.pos]
                     if targetindex not in dungeon:
                         print "Target level ", targetindex, "does not exist."
                         continue
                     targetlevel = dungeon[targetindex]
                     if targetlevel.stairdownExists(curindex):
                         #actually use stairs
-                        stairsquare=targetlevel.getstairdown(curindex)
+                        hero.pos=targetlevel.getstairdown(curindex)
                         curindex,curlevel=targetindex,targetlevel
                         hero.level=curindex
-                        hero.xpos,hero.ypos=stairsquare
                         printstatus() #Displays the level number
                         printmap()
                         if hero.level == OUTSIDE:
                             message("You exit the dungeon.")
                     else:
-                        print "Bad stairs from level ", targetindex, " to level ", currentindex
+                        print "Bad stairs from level ", targetindex, " to level ", curindex
                         continue
                 else:
                     message("You can't walk that way.")
@@ -870,11 +1026,10 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
     if not TIMEFREEZE:
         spreadzombies()
         for square in curlevel.monsters.keys():
-            (x,y)=square
+            x,y=square
             if hero.alive:
-                targetx,targety = hero.xpos,hero.ypos
-                (xshift,yshift)=(0,0)
-                
+                targetx,targety = hero.pos
+                xshift,yshift=0,0
                 if targetx > x:
                     xshift=1
                 elif targetx < x:
@@ -904,18 +1059,19 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
                         print "Error in levelAction/moveMonsters/positionRanking"
                 if TIMEFREEZE: positionRanking=[(0,0)]
                 for vector in positionRanking:
-                    newx,newy=x+vector[0], y+vector[1]
-                    if curlevel.solid(newx, newy):
+                    newPos=(x+vector[0], y+vector[1])
+                    if curlevel.solid(newPos):
                         continue
                     if vector==(0,0):
                         break
-                    if newx==hero.xpos and newy==hero.ypos:
+                    if newPos==hero.pos:
                         #attack the hero
                         message("The " + curlevel.monsters[square].name() + " attacks you.")
-                        herooldhp=hero.state["#"]
+                        herooldhp=hero.state[HP]
                         hero.setKiller(curlevel.monsters[square].symb())
+                        #not very OO
                         hero.getHit(curlevel.monsters[square].power, curlevel.monsters[square])
-                        herohpchange=herooldhp - hero.state["#"]
+                        herohpchange=herooldhp - hero.state[HP]
                         if herohpchange > 0:
                             message("It did " + str(herohpchange) + " damage.")
                         elif herohpchange == 0:
@@ -923,14 +1079,14 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
                         else:
                             message("It healed you.")
                         break
-                    if curlevel.isOccupied(newx, newy):
+                    if curlevel.isOccupied(newPos):
                         continue
                     flagsquare(square)
-                    flagsquare((newx,newy))
-                    curlevel.monsters[(newx,newy)]=curlevel.monsters[square]
+                    flagsquare(newPos)
+                    curlevel.monsters[newPos]=curlevel.monsters[square]
                     del curlevel.monsters[square]
-                    if curlevel.floormap[newy][newx]==MAGMA:
-                        magmify(hero.level, (newx,newy)) #A refresh so as not to duplicate code
+                    if curlevel.tile(newPos)==MAGMA:
+                        magmify(hero.level, newPos) #A refresh so as not to duplicate code
                     break
                 else:
                     message("The monster disintigrates.")
@@ -939,6 +1095,7 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
         updatelava()
     printheroarea()
 
+message("Press any key to continue.")
 printstatus()
 printheroarea()
 printhero()
@@ -946,9 +1103,14 @@ update()
 anykey()
 
 if (not action==QUIT) and (not TIMEFREEZE):
+    DEATHVIEW=True
     while lava.level != OUTSIDE:
+        if lava.level==hero.level:
+            DEATHMAGMA=False
+        else:
+            DEATHMAGMA=True
         oldlev=lava.level
-        updatelava()
+        lavamove()
         if hero.level in (lava.level, oldlev):
             printmap()
             printhero()
