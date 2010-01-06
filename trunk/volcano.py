@@ -7,24 +7,113 @@ import math
 
 DEBUG=True              # Gives extra info on the status line
 WIZARDKEYS=True         # ? toggles omniscience, . toggles timefreeze
-OMNISCIENT=True         # See everything, hear every message
+OMNISCIENT=False        # See everything, hear every message
 TIMEFREEZE=False        # Lava and monsters cannot move
-GODLYMIGHT=False        # Start with 50 of everything
+GODLYMIGHT=True         # Start with 50 of everything
 LAVAMUNITY=False        # Lava does not hurt you
 JUGGERNAUT=True         # Walk through walls
 TELEPORTER=True         # < moves you to the up staircase.
 FORGETSEEN=False        # Don't show previously seen areas
 
 FULLVIEW=False          # LOS is complete, not within 8 squares
-
+                        # The following are set to true _after death_ always.
 DEATHVIEW=False         # True the true state of anything you've seen
 DEATHMAGMA=False        # Lava travels fast offscreen when you're dead
 
-lavaspeed = 0
-hungerturns = 50
+lavaspeed = 0           # Speed at which the lava moves
+hungerturns = 200       # Number of turns before the player consumes a food
 
 programName="Volcano"
 programVersion="0.0.6 (beta)"
+
+# Volcano
+# 
+# The player, represented by a '@' screen on the terminal, explores a set of
+# underground caverns within a volcano.  His goal is to dive into the caves,
+# recovering as much treasure as possible before the volcano erupts and the
+# treasure is lost.
+# 
+# Movement
+# Movement is in the orthogonal directions via directional arrows, 
+# numpad, or vim keys.  Diagonal movement is not allowed.
+# To walk in place press spacebar, period, or 5 (center) on the numpad.
+# To attack monsters, the player moves "into" them.  To go up or down stairs,
+# the player presses < and > respectively.  The dungeon steadily branches
+# as it gets deeper.  The maximum depth of the dungeon is 8.
+# Help/version is via the ? key.
+# 
+# Monsters
+# Monsters are denoted by a letter a-z.  The later the letter in the alphabet,
+# the more difficult the monster.  Monsters move in unspecified order in
+# between the player's moves.  A monster goes directly toward the favor.
+# It chooses to move vertically or horizontally depending on the the monster.
+# If it must move away from the player to reach him (i.e. around an obstacle)
+# it instead stays in place.  If they move "into" the player they attack it.
+# Monsters have a power level, and an initial health determined by that power.
+# Their power determines their attack, which is identical to that of the
+# player.
+# Attacks do damage equal to Attacking Power, minus any armor (minimum 0).
+# Like the player, monsters move one square per turn.  Monsters neither
+# destroy items nor pick them up.  When a monster's health reaches 0, it is
+# removed from the board.  This confers a number of points dependent on the
+# type of the monster.
+# There is one special monster, the zombie.  If is a zombie is adjacent to
+# another monster at any point in the game, that other monster is transformed
+# into a zombie.
+# 
+# Items
+# Items are allocated to the levels in a predesigned fashion (a certain number
+# per level, with no more than one special feature per level).  Within the
+# level they are distributed uniformly thoughout passable squares, including
+# staircases.
+# Available items are
+#  @       The player's maximum health.  
+#          Gaining a @ confers a # as well.
+#  #       The player's current health.
+#  (       The attack power of the player's weapons.
+#  [       The defense value of the player's armor.
+#  !       Potions heal the player at the end of its turn, one point per
+#          potion consumed.
+#  %       Food is consumed whenever the player is hungry, which is every
+#          set number of turns.  If the player lacks food, it dies.
+#  ?       A scroll is consumed in place of a potion or food if either could
+#          be used but is not present.  The scroll is found on a special
+#          spiral level.
+#  *       Gem
+#  $       Money
+#  T       Turns.  Used as a turn counter, the player receives one per turn.
+#  P       Points.  Indicates the player's points, including those for items.
+# Items present when the player dies confer a number of points for the type
+# of item, times the number of such items.
+# 
+# Lava
+# Lava is a deadly fluid bubbling up from a single point in the volcano.  Each
+# turn, it moves as a monster.  When the lava moves, it spreads one square in
+# every possible direction, unless there is a staircase it can flow down, in
+# which case it does the same thing downstairs.  When a level is completely
+# filled with lava, the lava again starts filling the next higher level, or
+# a new higher level.
+# Lava instantly destroys items, monsters, and the player.  If a monster or
+# the player walks onto a lava square, it is similarly destroyed.  A counter
+# is kept of potential points the lava destroys, allowing it to act as a rival
+# to the player.
+# 
+# Points
+# Items are worth a number of points at the end of the game.
+# Monsters are worth a number of points if killed.
+# Finally, the player gets one point if it escapes the dungeon successfully.
+# Points are destroyed if the player loses health, drinks potions, 
+# or uses the scroll.  If a monster kills the player one point is lost.
+# Other than these instances, the game is designed so that all other points
+# should be accounted toward the score of the lava.
+# 
+# Ending the game
+# The player dies if it walks into the lava, enters a lava-filled level,
+# is covered by lava, is killed by a monster without a healing item, or 
+# starves to death due to lack of food.  If the player exits the volcano,
+# neccessarily before it erupts, the game also ends when the volcano does
+# erupt.  The player is not allowed to move after exiting the volcano.
+
 
 #initialization
 screen=curses.initscr()
@@ -276,10 +365,13 @@ class monster:
     hp = 1
     power = 0
     asc=None
+    zombie=False
     def __init__(self, x):
         self.asc=x
         self.hp=ord(x)-ord("a")+1
         self.power = self.hp
+        if x=="z":
+            self.zombie=True
     def name(self):
         return monstername(self.asc)
     def symb(self):
@@ -297,8 +389,8 @@ class monster:
         return random.choice((True, False))
     def addScore(self, points):
         pass
-
-
+    def isZombie(self):
+        return self.zombie
 
 class level:
     floormap = []
@@ -780,18 +872,23 @@ def printmap():
     for square in getsight(hero.pos):
         printsymb(square, curlevel.symb(square))
         curlevel.seen(square)
+def inMap(square):
+    if 0 <= square[0] < mapWidth:
+        if 0<= square[1] < mapHeight:
+            return True
+    return False
+def adjacentsquares(mapsubset):
+    adjacent=set()
+    for square in mapsubset:
+        x,y=square
+        for sq in [(x,y+1),(x,y-1),(x+1,y),(x-1,y)]:
+            if sq not in mapsubset:
+                if inMap(sq):
+                    adjacent.add(sq)
+    return adjacent
 def getsight(psquare):
-    if FULLVIEW:
-        return mapPositions
-    else:
-        px,py=psquare
-        minx=max(0,px-10)
-        maxx=min(mapWidth-1,px+10)
-        miny=max(0,py-10)
-        maxy=min(mapHeight-1,py+10)
-        possarea = [(x,y) for x in range(minx,maxx+1) for y in range(miny,maxy+1)]
-        actualarea = [square for square in possarea if LOS(psquare,square)]
-        return set(actualarea)
+    possPos=mapPositions
+    return [s for s in possPos if LOS(psquare,s)]
 def printheroarea():
     global herocansee
     global herocannotsee
@@ -820,8 +917,8 @@ def flagsquare(square):
 def flagheromove(a,b):
     global herocansee
     global herocannotsee
-    old = getsight(a)
-    new = getsight(b)
+    old = set(getsight(a))
+    new = set(getsight(b))
     herocansee |= (new - old)
     herocannotsee |= (old - new)
 
@@ -889,7 +986,7 @@ OUTSIDE,NOITEMS,NOMONSTERS,LAVASOURCE,SPIRAL=range(5)
 dungeon = {
     OUTSIDE:level(items=[], monsters=[], stairsup=[], stairsdown=["top"], special=[OUTSIDE]),
     "top":level(items=[], monsters=[], stairsup=[OUTSIDE], stairsdown=["middle"], special=[]),
-    "middle":level(items=[POTION,SCROLL], monsters=[monster("b")], stairsup=["top"], stairsdown=["bottom"], special=[]),
+    "middle":level(items=[POTION,SCROLL], monsters=[monster("z"), monster("b")], stairsup=["top"], stairsdown=["bottom"], special=[]),
     "bottom":level(items=[], monsters=[], stairsup=["middle"], stairsdown=[], special=[LAVASOURCE]),
 }
 curindex = "middle"
@@ -903,7 +1000,13 @@ def sight(level,space,mess):
 def adjacent(a,b):
     return abs(a[0]-b[0]) + abs(a[1]-b[1]) == 1
 def spreadzombies():
-    pass
+    for square in curlevel.monsters:
+        if curlevel.monsters[square].isZombie():
+            (x,y)=square
+            for nearbySquare in [(x+1,y),(x-1,y),(x,y+1),(x,y-1)]:
+                if nearbySquare in curlevel.monsters:
+                    if not curlevel.monsters[nearbySquare].isZombie():
+                        curlevel.monsters[nearbySquare] = monster("z")
 
 lavaCounter=-1
 def updatelava():
@@ -1185,3 +1288,7 @@ update()
 anykey()
 
 closescreen()
+
+playerScore, lavaScore = hero.state[POINT], lava.score
+print "Player got ", playerScore, " points."
+print "Lava got ", lava.score, " points."
