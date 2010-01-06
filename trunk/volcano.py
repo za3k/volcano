@@ -1,3 +1,4 @@
+
 import curses
 import curses.ascii
 import pprint
@@ -5,28 +6,30 @@ import random
 import copy
 import math
 
-DEBUG=True              # Gives extra info on the status line
-WIZARDKEYS=True         # ? toggles omniscience, . toggles timefreeze
-OMNISCIENT=True         # See everything, hear every message
+DEBUG=False              # Gives extra info on the status line
+WIZARDKEYS=False         # ? toggles omniscience, . toggles timefreeze
+OMNISCIENT=False         # See everything, hear every message
 TIMEFREEZE=False        # Lava and monsters cannot move
-GODLYMIGHT=True         # Start with 50 of everything
+GODLYMIGHT=False         # Start with 50 of everything
 LAVAMUNITY=False        # Lava does not hurt you
-JUGGERNAUT=True         # Walk through walls
-TELEPORTER=True         # < moves you to the up staircase.
+JUGGERNAUT=False         # Walk through walls
+TELEPORTER=False         # < moves you to the up staircase.
 FORGETSEEN=False        # Don't show previously seen areas
 
 FULLVIEW=False          # LOS is complete, not within 8 squares
                         # The following are set to true _after death_ always.
+NUMBERSON=False         # Shows numbers or not.
+                        
 DEATHVIEW=False         # True the true state of anything you've seen
 DEATHMAGMA=False        # Lava travels fast offscreen when you're dead
 RUMBLEOFF=False         # If the player escapes the dungeon, stop showing
                         # the message after the first time
 
-lavaspeed = 0           # Speed at which the lava moves
+lavaspeed = 1           # Speed at which the lava moves
 hungerturns = 400       # Number of turns before the player consumes a food
 
 programName="Volcano"
-programVersion="0.0.8 (beta)"
+programVersion="0.0.9 (beta)"
 
 # Volcano
 # 
@@ -259,6 +262,7 @@ CHAR_SYMB=symbol("@", BOLD_BLUE)
 DEAD_CHAR_SYMB=symbol("@", BLUE)
 BURNT_CHAR_SYMB=symbol("@", RED)
 ERROR_SYMB=symbol("?", ALERT_COLOR)
+WIN_SYMB=symbol(" ", BLACK)
 
 mapPositions=[(x, y) for x in range(mapWidth) for y in range(mapHeight)]
 
@@ -279,8 +283,8 @@ itemDict = {
 gemColors = (BOLD_GREEN, BOLD_BLUE, BOLD_RED, WHITE, YELLOW, GRAY)
 
 def itemsymbol(itm):
-    if itm=="*":
-        return symbol("*", gemColors[(curlevel.depth % len(gemColors))])
+    if itm==GEM:
+        return symbol("*", gemColors[(curlevel.depth+5) % len(gemColors)])
     elif itm in itemDict:
         return itemDict[itm]
     else:
@@ -296,7 +300,7 @@ def itemscore(item):
     elif item==FOOD:
         return 1
     elif item==GEM:
-        return 2
+        return 3
     elif item==WEAPON:
         return 1
     elif item==ARMOR:
@@ -304,11 +308,13 @@ def itemscore(item):
     elif item==POTION:
         return 1
     elif item==SCROLL:
-        return 3
+        return 18
     else:
         print "Illegal scoring item"
         return 0
 
+def itemAtDepth(depth):
+    return random.choice([MAXHP,HP,MONEY,FOOD,WEAPON,ARMOR,POTION])
 
 monsterDict = {
     "ant": BROWN,
@@ -367,13 +373,10 @@ class monster:
     hp = 1
     power = 0
     asc=None
-    zombie=False
     def __init__(self, x):
         self.asc=x
         self.hp=ord(x)-ord("a")+1
-        self.power = self.hp
-        if x=="z":
-            self.zombie=True
+        self.power = self.hp-1
     def name(self):
         return monstername(self.asc)
     def symb(self):
@@ -382,17 +385,24 @@ class monster:
         return (self.hp > 0)
     def getHit(self, actor, power):
         self.hp -= max(0,power)
-        if actor==hero:
+        if actor==hero and NUMBERSON:
             message("It has " + pprint.pformat(self.hp) + " HP remaining.")
-        if not self.alive:
-            message("The " + self.name() + " dies.")
-            score(actor, 1)
+        if not self.alive():
+            actor.addScore(1)
     def prefersX(self):
         return random.choice((True, False))
     def addScore(self, points):
         pass
     def isZombie(self):
-        return self.zombie
+        return self.asc==26
+
+def monsterAtDepth(depth):
+    newdepth=depth
+    while random.choice([True, False]): #Continue a random walk as long as neccessary
+        newdepth = random.choice([max(depth-1, 1), min(depth+1, 8)])
+    basediff = min(depth+1, (newdepth-2) * 4  + 2)
+    difficulty = max(0, min(basediff + random.choice([-1,0,1]), 25))
+    return monster(chr(difficulty+ord('a')))
 
 class level:
     floormap = []
@@ -401,8 +411,9 @@ class level:
     monsters = {}
     stairs = {}
     full=False
+    depth = -2
     cachedupstair=None
-    def __init__(self, items, monsters, stairsup, stairsdown, special):
+    def __init__(self, items, monsters, stairsup, stairsdown, special, depth):
         #map generation
         self.floormap=[[ERROR_SYMB for x in range(mapWidth)] for y in range(mapHeight)]
         self.knownmap=[[UNKNOWN for x in range(mapWidth)] for y in range(mapHeight)]
@@ -566,7 +577,7 @@ class level:
                     if not drawhoriz(room1,room2):
                         if not drawvert(room1,room2):
                             drawbroken(room1,room2)
-            
+        
         #item generation
         self.items={}
         for i in items:
@@ -588,6 +599,7 @@ class level:
         if LAVASOURCE in special:
             space = self.randomFeaturelessSpace()
             self.floormap[space[1]][space[0]] = MAGMA
+        self.depth=depth
     def additem(self, item):
         space = self.randomUnfilledSpace()
         self.items[space]=item
@@ -751,6 +763,7 @@ def LOS(square1,square2):
             y1-=1
     return testLine(x1,y1,x2,y2)
 
+LIFEVALUE=10
 class character:
     pos = (4,4)
     level = 1 #dungeon level
@@ -761,15 +774,17 @@ class character:
     hunger = 0
     def __init__(self):
         self.addItem(MAXHP,3)
-        self.addItem(WEAPON)
-        self.addItem(ARMOR)
+        self.addItem(HP,3)
+        self.addItem(FOOD)
         if GODLYMIGHT:
-            self.addItem(MAXHP,50)
-            self.addItem(WEAPON,50)
-            self.addItem(ARMOR,50)
-        self.addScore(1) #for living
+            self.addItem(MAXHP,47)
+            self.addItem(HP,47)
+            self.addItem(FOOD,50)
+            self.addItem(WEAPON,49)
+            self.addItem(ARMOR,49)
+        self.addScore(LIFEVALUE) #for living
         hunger=0
-        self.addScore(-6) #starting weapon, armor, 
+        self.addScore(-3) #starting max health
     def addItem(self, item, amount=1):
         if item in self.state:
             if item==HP:
@@ -777,11 +792,12 @@ class character:
             self.state[item] += amount
             if item!= POINT and item != TURN:
                 self.addScore(amount*itemscore(item))
-            if item==MAXHP:
-                self.addItem(HP, amount) #max health increases current health
+            #if item==MAXHP:
+            #    self.addItem(HP, amount) #max health increases current health
+            #    self.addScore(-1) #points for the 
             if item==HP and self.state[HP] <= 0:
                 self.alive=False
-                self.addScore(-1)
+                self.addScore(-LIFEVALUE)
                 message("You die.")
         else:
             print "Error, that is not a valid item"
@@ -795,7 +811,7 @@ class character:
             self.removeItem(HP, damage)
             actor.addScore(damage)
             if not self.alive:
-                actor.addScore(1)
+                actor.addScore(20)
                 #add cause of death here
     def addScore(self,points):
         self.addItem(POINT, points)
@@ -807,8 +823,9 @@ class character:
         if self.hunger >= hungerturns:
             if self.state[FOOD] <= 0:
                 if self.state[SCROLL] <= 0:
+                    self.setKiller(itemsymbol(FOOD))
                     self.alive=False
-                    self.addScore(-1)
+                    self.addScore(-LIFEVALUE)
                     message("You starve to death.")
                 else:
                     self.hunger -= hungerturns
@@ -947,13 +964,13 @@ standardKeys = {
  ord("d"):RIGHT,
  ord("D"):RIGHT,
  curses.KEY_DOWN:DOWN,
- ord("k"):DOWN,
- ord("K"):DOWN,
+ ord("j"):DOWN,
+ ord("J"):DOWN,
  ord("s"):DOWN,
  ord("S"):DOWN,
  curses.KEY_UP:UP,
- ord("j"):UP,
- ord("J"):UP,
+ ord("k"):UP,
+ ord("K"):UP,
  ord("w"):UP,
  ord("W"):UP,
  ord(">"):DEPTH_DOWN,
@@ -1008,7 +1025,6 @@ def label(plan, prefix=""):
 dungeonplan = label(twist(dungeonbase), "")
 OUTSIDE,NOITEMS,NOMONSTERS,LAVASOURCE,SPIRAL=range(5)
 dungeonplan[0] = OUTSIDE
-print dungeonplan
 indices=[]
 def leaves(plan):
     if len(plan)==1:
@@ -1033,17 +1049,10 @@ gemlevels = map (
      lambda depth: random.choice(levelsatdepth(dungeonplan,depth)),
      range(1,7) #1..6
      )
-print gemlevels
+if DEBUG:
+    print gemlevels
 
-def monsterAtDepth(depth):
-    while random.choice([True, False]): #Continue a random walk as long as neccessary
-        depth = random.choice([max(depth-1, 1), min(depth+1, 8)])
-    basediff = (depth-1) * 3  + 1
-    difficulty = basediff + random.choice([-1,0,1])
-    return monster(chr(difficulty+ord('a')))
-def itemAtDepth(depth):
-    return random.choice([MAXHP,HP,MONEY,FOOD,WEAPON,ARMOR,POTION])
-def makeDungeon(dungeonplan, depth=0, up=[], dungeon={}):
+def makeSubDungeon(dungeonplan, depth=0, up=[], dungeon={}):
     name = dungeonplan[0]
     subnames = [sublev[0] for sublev in dungeonplan[1:]]
     monsters = []
@@ -1066,14 +1075,17 @@ def makeDungeon(dungeonplan, depth=0, up=[], dungeon={}):
     if name == scrolllevel:
         special.append(SPIRAL)
         items.append(SCROLL)
-    if special!=[]:
+    if special!=[] and DEBUG:
         print name, depth, special
-    dungeon[name]=level(items=items, monsters=monsters, stairsup=up, stairsdown=subnames, special=special)
+    dungeon[name]=level(items=items, monsters=monsters, stairsup=up, stairsdown=subnames, special=special, depth=depth)
     for sublev in dungeonplan[1:]:
-        dungeon = makeDungeon(sublev, depth+1, [name], dungeon)
+        dungeon = makeSubDungeon(sublev, depth+1, [name], dungeon)
     return dungeon
 
-dungeon=makeDungeon(dungeonplan)
+dungeon=makeSubDungeon(dungeonplan)
+if DEBUG:
+    for level in gemlevels:
+        print level, dungeon[level].depth
 #dungeon = {
 #    OUTSIDE:level(items=[], monsters=[], stairsup=[], stairsdown=["top"], special=[OUTSIDE]),
 #    "top":level(items=[], monsters=[], stairsup=[OUTSIDE], stairsdown=["middle"], special=[]),
@@ -1221,7 +1233,8 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
                     if curlevel.monsterPresent(newPos):
                         #hit the monster
                         mname=curlevel.monsters[newPos].name()
-                        message("You hit the " + mname + " for "+pprint.pformat(hero.power())+" damage.")
+                        if NUMBERSON:
+                            message("You hit the " + mname + " for "+pprint.pformat(hero.power())+" damage.")
                         curlevel.hitMonster(newPos, hero, hero.power())
                         if newPos not in curlevel.monsters:
                             message("It dies.")
@@ -1330,13 +1343,14 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
                         hero.setKiller(curlevel.monsters[square].symb())
                         #not very OO
                         hero.getHit(curlevel.monsters[square].power, curlevel.monsters[square])
-                        herohpchange=herooldhp - hero.state[HP]
-                        if herohpchange > 0:
-                            message("It did " + str(herohpchange) + " damage.")
-                        elif herohpchange == 0:
-                            message("It did not hurt you.")
-                        else:
-                            message("It healed you.")
+                        if NUMBERSON:
+                            herohpchange=herooldhp - hero.state[HP]
+                            if herohpchange > 0:
+                                message("It did " + str(herohpchange) + " damage.")
+                            elif herohpchange == 0:
+                                message("It did not hurt you.")
+                            else:
+                                message("It healed you.")
                         break
                     if curlevel.isOccupied(newPos):
                         continue
