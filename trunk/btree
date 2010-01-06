@@ -1,0 +1,17 @@
+def sizeof(tree):
+    return len(tree)
+
+def alltrees(size):
+    if size == 0:
+        return ((),)
+    elif size == 1:
+        return ()
+    else:
+        collection = []
+        for i in range(size):
+            for x in alltrees(size):
+                for y in alltrees(size-y):
+                    collection.append((x,y))
+
+print alltrees(2)
+                
