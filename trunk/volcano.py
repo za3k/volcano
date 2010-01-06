@@ -2,16 +2,17 @@ import curses
 import curses.ascii
 import pprint
 import random
+import copy
 
-WIZARDKEYS=False
-OMNISCIENT=True
+WIZARDKEYS=True
+OMNISCIENT=False
 TIMEFREEZE=False
-GODLYMIGHT=False
+GODLYMIGHT=True
 LAVAMUNITY=False
 debug=True
 
 programName="Volcano"
-programVersion="0.0.3 (beta)"
+programVersion="0.0.4 (beta)"
 
 debid=0
 def setid(x):
@@ -37,6 +38,7 @@ WHITE = color_to_attr(curses.COLOR_WHITE) + curses.A_BOLD
 GRAY = GREY = color_to_attr(curses.COLOR_WHITE)
 BOLD_RED = color_to_attr(curses.COLOR_RED) + curses.A_BOLD
 RED = color_to_attr(curses.COLOR_RED)
+BLUE = color_to_attr(curses.COLOR_BLUE)
 BOLD_BLUE = color_to_attr(curses.COLOR_BLUE) + curses.A_BOLD
 BROWN = color_to_attr(curses.COLOR_RED) + curses.A_DIM
 TAN = color_to_attr(curses.COLOR_YELLOW)
@@ -78,7 +80,6 @@ def message(str):
     global messpos
             
     while (len(str) > 0):
-        #print "ACCESS:", str, messline, messpos
         if(messline == messLines-1):
             charsleft = COLUMNS-morelen-messpos
         else:
@@ -88,16 +89,15 @@ def message(str):
             screen.addstr(messline, messpos, 
                           str[0:printedchars])
             messpos += printedchars
-            str = str[printedchars+1:]
+            str = str[printedchars:]
         else:
-            if(messline == messLines-1): #more
+            if messline == messLines-1: #more
                 screen.addstr(messline, messpos, morestr)
                 update()
                 anykey()
                 screen.addstr(messline, messpos, " "*morelen) #clear 'more'
                 messpos=0
                 messline = 0
-                #clearmessage()
             else:
                 messline += 1
             messpos=0
@@ -154,12 +154,11 @@ DOWN_STAIR = symbol(">", WHITE)
 LAVA = symbol(",", RED)
 MAGMA = symbol(",", BOLD_RED)
 CHAR_SYMB=symbol("@", BOLD_BLUE)
+DEAD_CHAR_SYMB=symbol("@", BLUE)
+BURNT_CHAR_SYMB=symbol("@", RED)
 ERROR_SYMB=symbol("?", ALERT_COLOR)
 
 mapPositions=[(x, y) for x in range(mapWidth) for y in range(mapHeight)]
-
-def score(actor, points):
-    actor.addScore(points)
 
 itemList = {
     "%":BROWN,
@@ -173,9 +172,10 @@ itemList = {
 for asc, col in itemList.items():
     itemList[asc] = symbol(asc, col)
 
+gemColors = (BOLD_GREEN, BOLD_BLUE, BOLD_RED, WHITE, YELLOW, GRAY)
 def itemsymbol(itm):
     if itm=="*":
-        return symbol("*", random.choice((BOLD_GREEN, BOLD_BLUE, BOLD_RED, WHITE, YELLOW, GRAY)))
+        return symbol("*", gemColors[(curlevel.depth % len(gemColors))])
     elif itm in itemList:
         return itemList[itm]
     else:
@@ -249,12 +249,12 @@ class level:
         self.depth=depth
         #map generation
         self.floormap=[[ERROR_SYMB for x in range(mapWidth)] for y in range(mapHeight)]
-        self.knownmap=[[False for x in range(mapWidth)] for y in range(mapHeight)]
+        self.knownmap=[[UNKNOWN for x in range(mapWidth)] for y in range(mapHeight)]
         if OUTSIDE in special:
             for x,y in mapPositions:
                 #print x,y
                 self.floormap[y][x]=GRASS
-                self.knownmap[y][x]=True
+                self.seen(x,y)
         else:
             #outside walls
             for y in range(mapHeight):
@@ -328,13 +328,7 @@ class level:
         else:
             return self.floormap[y][x]
     def limitedsymb(self,x,y):
-        if self.wasSeen(x,y):
-            if self.itemPresent(x,y):
-                return itemsymbol(self.item(x,y))
-            else:
-                return self.floormap[y][x]
-        else:
-            return UNKNOWN
+        return self.knownmap[y][x]
     def solid(self, x, y):
         tile = self.floormap[y][x]
         if tile==WALL:
@@ -382,9 +376,12 @@ class level:
         else:
             return True
     def seen(self,x,y):
-        self.knownmap[y][x]=True;
+        if (x,y) in self.items:
+            self.knownmap[y][x]=itemsymbol(self.item(x,y))
+        else:
+            self.knownmap[y][x]=copy.copy(self.floormap[y][x])
     def wasSeen(self, x, y):
-        return self.knownmap[y][x];
+        return (not (self.knownmap[y][x]==UNKNOWN))
     def stairup(self):
         #assumes there were stairs up
         return self.cachedupstair
@@ -533,7 +530,13 @@ def printhero():
     global cursorxpos
     global cursorypos
     
-    printsymb(hero.xpos, hero.ypos, CHAR_SYMB)
+    if hero.alive:
+        printsymb(hero.xpos, hero.ypos, CHAR_SYMB)
+    else:
+        if curlevel.floormap[hero.ypos][hero.xpos] in (MAGMA, LAVA):
+            printsymb(hero.xpos, hero.ypos, BURNT_CHAR_SYMB)
+        else:
+            printsymb(hero.xpos, hero.ypos, DEAD_CHAR_SYMB)
     cursorxpos=hero.xpos
     cursorypos=LINES-hero.ypos-2
 
@@ -600,7 +603,7 @@ def printheroarea():
             printsymb(x,y, curlevel.symb(x,y))
     herocannotsee.clear()
     herocansee.clear()
-    printhero();
+    printhero()
 #don't allocate the square now because the hero could shift levels
 def flagsquare(square): 
     global heromaybesees
@@ -727,7 +730,7 @@ def updatelava():
             else:
                 print "No stairs back down!"
         else:
-            print "Lava done"
+            pass #lava's done
     else:
         stairspresent=[square for square in bordersquares if square in lavalevel.stairs]
         for x,y in stairspresent:
@@ -743,7 +746,8 @@ def updatelava():
         for square in bordersquares:
             magmify(lava.level,square)
         for x,y in magmasquares:
-            flagsquare((x,y))
+            if lava.level==hero.level:
+                flagsquare((x,y))
             lavalevel.floormap[y][x] = LAVA
 def magmify(levelname,square):
     #assuption: not a down staircase, not solid
@@ -810,6 +814,8 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
                         flagheromove((hero.xpos,hero.ypos),(newxPos,newyPos))
                         hero.xpos = newxPos
                         hero.ypos = newyPos
+                        if curlevel.floormap[newyPos][newxPos] == MAGMA:
+                            magmify(hero.level, (newxPos,newyPos))
                         if curlevel.itemPresent(newxPos, newyPos):
                             curlevel.takeItem(newxPos, newyPos, hero)
                             message("You pick it up.")
@@ -865,67 +871,70 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
         spreadzombies()
         for square in curlevel.monsters.keys():
             (x,y)=square
-            targetx,targety = hero.xpos,hero.ypos
-            (xshift,yshift)=(0,0)
-            
-            if targetx > x:
-                xshift=1
-            elif targetx < x:
-                xshift=-1
-            else:
-                xshift=0
-            if targety > y:
-                yshift=1
-            elif targety < y:
-                yshift=-1
-            else:
-                yshift=0
-            positionRanking = []
-            if xshift != 0 and yshift != 0: #Diagonal
-                if curlevel.monsters[(x,y)].prefersX():
-                    positionRanking = [(xshift, 0), (0, yshift), (0,0)]
+            if hero.alive:
+                targetx,targety = hero.xpos,hero.ypos
+                (xshift,yshift)=(0,0)
+                
+                if targetx > x:
+                    xshift=1
+                elif targetx < x:
+                    xshift=-1
                 else:
-                    positionRanking = [(0, yshift), (xshift, 0), (0,0)]
-            elif xshift == 0 and yshift == 0:
-                positionRanking = [(0,0)]
-            else: #Orthogonal
-                if xshift == 0:
-                    positionRanking = [(0, yshift), (0,0)]
-                elif yshift == 0:
-                    positionRanking = [(xshift, 0), (0,0)]
+                    xshift=0
+                if targety > y:
+                    yshift=1
+                elif targety < y:
+                    yshift=-1
                 else:
-                    print "Error in levelAction/moveMonsters/positionRanking"
-            if TIMEFREEZE: positionRanking=[(0,0)]
-            for vector in positionRanking:
-                newx,newy=x+vector[0], y+vector[1]
-                if curlevel.solid(newx, newy):
-                    continue
-                if vector==(0,0):
-                    break
-                if newx==hero.xpos and newy==hero.ypos:
-                    #attack the hero
-                    message("The " + curlevel.monsters[square].name() + " attacks you.")
-                    herooldhp=hero.state["#"]
-                    hero.setKiller(curlevel.monsters[square].symb())
-                    hero.getHit(curlevel.monsters[square].power, curlevel.monsters[square])
-                    herohpchange=herooldhp - hero.state["#"]
-                    if herohpchange > 0:
-                        message("It did " + str(herohpchange) + " damage.")
-                    elif herohpchange == 0:
-                        message("It did not hurt you.")
+                    yshift=0
+                positionRanking = []
+                if xshift != 0 and yshift != 0: #Diagonal
+                    if curlevel.monsters[(x,y)].prefersX():
+                        positionRanking = [(xshift, 0), (0, yshift), (0,0)]
                     else:
-                        message("It healed you.")
+                        positionRanking = [(0, yshift), (xshift, 0), (0,0)]
+                elif xshift == 0 and yshift == 0:
+                    positionRanking = [(0,0)]
+                else: #Orthogonal
+                    if xshift == 0:
+                        positionRanking = [(0, yshift), (0,0)]
+                    elif yshift == 0:
+                        positionRanking = [(xshift, 0), (0,0)]
+                    else:
+                        print "Error in levelAction/moveMonsters/positionRanking"
+                if TIMEFREEZE: positionRanking=[(0,0)]
+                for vector in positionRanking:
+                    newx,newy=x+vector[0], y+vector[1]
+                    if curlevel.solid(newx, newy):
+                        continue
+                    if vector==(0,0):
+                        break
+                    if newx==hero.xpos and newy==hero.ypos:
+                        #attack the hero
+                        message("The " + curlevel.monsters[square].name() + " attacks you.")
+                        herooldhp=hero.state["#"]
+                        hero.setKiller(curlevel.monsters[square].symb())
+                        hero.getHit(curlevel.monsters[square].power, curlevel.monsters[square])
+                        herohpchange=herooldhp - hero.state["#"]
+                        if herohpchange > 0:
+                            message("It did " + str(herohpchange) + " damage.")
+                        elif herohpchange == 0:
+                            message("It did not hurt you.")
+                        else:
+                            message("It healed you.")
+                        break
+                    if curlevel.isOccupied(newx, newy):
+                        continue
+                    flagsquare(square)
+                    flagsquare((newx,newy))
+                    curlevel.monsters[(newx,newy)]=curlevel.monsters[square]
+                    del curlevel.monsters[square]
+                    if curlevel.floormap[newy][newx]==MAGMA:
+                        magmify(hero.level, (newx,newy)) #A refresh so as not to duplicate code
                     break
-                if curlevel.isOccupied(newx, newy):
-                    continue
-                flagsquare((x,y))
-                flagsquare((newx,newy))
-                curlevel.monsters[(newx,newy)]=curlevel.monsters[(x,y)]
-                del curlevel.monsters[(x,y)]
-                break
-            else:
-                message("The monster disintigrates.")
-                del curlevel.monsters[(x,y)]
+                else:
+                    message("The monster disintigrates.")
+                    del curlevel.monsters[square]
         spreadzombies()
         updatelava()
     printheroarea()
@@ -942,6 +951,7 @@ if (not action==QUIT) and (not TIMEFREEZE):
         updatelava()
         if hero.level in (lava.level, oldlev):
             printmap()
+            printhero()
             update()
     
             
