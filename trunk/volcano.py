@@ -6,14 +6,14 @@ import random
 import copy
 import math
 
-DEBUG=False              # Gives extra info on the status line
-WIZARDKEYS=False         # ? toggles omniscience, . toggles timefreeze
-OMNISCIENT=False         # See everything, hear every message
+DEBUG=False             # Gives extra info on the status line
+WIZARDKEYS=False        # ? toggles omniscience, . toggles timefreeze
+OMNISCIENT=False        # See everything, hear every message
 TIMEFREEZE=False        # Lava and monsters cannot move
-GODLYMIGHT=False         # Start with 50 of everything
+GODLYMIGHT=False        # Start with 50 of everything
 LAVAMUNITY=False        # Lava does not hurt you
-JUGGERNAUT=False         # Walk through walls
-TELEPORTER=False         # < moves you to the up staircase.
+JUGGERNAUT=False        # Walk through walls
+TELEPORTER=False        # < moves you to the up staircase.
 FORGETSEEN=False        # Don't show previously seen areas
 
 FULLVIEW=False          # LOS is complete, not within 8 squares
@@ -236,7 +236,7 @@ class symbol:
             self.ascii=ord(char)
             self.color=attr
         else:
-            print "Error in symbol: invalid character or string"
+            print("Error in symbol: invalid character or string")
 
 def printsymb(square, symb):
     x,y=square
@@ -288,7 +288,7 @@ def itemsymbol(itm):
     elif itm in itemDict:
         return itemDict[itm]
     else:
-        print "Nonexistant item ", itm
+        print("Nonexistant item: "+repr(itm))
 
 def itemscore(item):
     if item==MAXHP:
@@ -310,7 +310,7 @@ def itemscore(item):
     elif item==SCROLL:
         return 18
     else:
-        print "Illegal scoring item"
+        print("Illegal scoring item")
         return 0
 
 def itemAtDepth(depth):
@@ -474,7 +474,7 @@ class level:
                 return int(round((b-a)/3+a)),int(round((b-a)*2/3+a))
             def randomValues(minimum, maximum, minDistance):
                 if abs(minimum-maximum) <= minDistance:
-                    print "Error in randomValues"
+                    print("Error in randomValues")
                     return 1,1
                 while 1:
                     point1 = random.randrange(minimum,maximum)
@@ -651,7 +651,7 @@ class level:
             if not self.monsters[square].alive():
                 del self.monsters[square]
         else:
-            print "Error, no monster present on that square."
+            print("Error, no monster present on that square.")
     def itemPresent(self, square):
         return square in self.items
     def isOccupied(self,square):
@@ -660,7 +660,7 @@ class level:
         if self.itemPresent(square):
             return self.items[square]
         else:
-            print "Illegal item access: item not present."
+            print("Illegal item access: item not present.")
             return "@"
     def takeItem(self, square, actor):
         tempItem = self.items[square]
@@ -695,11 +695,11 @@ class level:
         #assumes it's actually down
         stairset=[key for key,item in self.stairs.iteritems() if item==name]
         if len(stairset)==0:
-            print "No stairs down"
+            print("No stairs down")
         elif len(stairset)==1:
             return stairset[0]
         else:
-            print "Too many stairs down"
+            print("Too many stairs down")
             return stairset[0]
 
 def testPoint(square):
@@ -800,7 +800,7 @@ class character:
                 self.addScore(-LIFEVALUE)
                 message("You die.")
         else:
-            print "Error, that is not a valid item"
+            print("Error, that is not a valid item")
     def removeItem(self,item,amount=1):
         self.addItem(item, -amount)
     def power(self):
@@ -869,7 +869,7 @@ def printstatus():
         token=(token[0],token[1]+" " * max(0, idealTokenLength-len(token[1])-1))
         pieces.append(token)
     if pieces==[]:
-        print "error, no status line"
+        print("error, no status line")
     else:
         if DEBUG:
             pieces.append((symbol("L"), ": " + pprint.pformat(hero.level)))
@@ -1050,7 +1050,7 @@ gemlevels = map (
      range(1,7) #1..6
      )
 if DEBUG:
-    print gemlevels
+    print(gemlevels)
 
 def makeSubDungeon(dungeonplan, depth=0, up=[], dungeon={}):
     name = dungeonplan[0]
@@ -1076,7 +1076,7 @@ def makeSubDungeon(dungeonplan, depth=0, up=[], dungeon={}):
         special.append(SPIRAL)
         items.append(SCROLL)
     if special!=[] and DEBUG:
-        print name, depth, special
+        print((name, depth, special))
     dungeon[name]=level(items=items, monsters=monsters, stairsup=up, stairsdown=subnames, special=special, depth=depth)
     for sublev in dungeonplan[1:]:
         dungeon = makeSubDungeon(sublev, depth+1, [name], dungeon)
@@ -1085,7 +1085,7 @@ def makeSubDungeon(dungeonplan, depth=0, up=[], dungeon={}):
 dungeon=makeSubDungeon(dungeonplan)
 if DEBUG:
     for level in gemlevels:
-        print level, dungeon[level].depth
+        print((level, dungeon[level].depth))
 #dungeon = {
 #    OUTSIDE:level(items=[], monsters=[], stairsup=[], stairsdown=["top"], special=[OUTSIDE]),
 #    "top":level(items=[], monsters=[], stairsup=[OUTSIDE], stairsdown=["middle"], special=[]),
@@ -1156,7 +1156,7 @@ def lavamove():
                 magmify(lava.level,stairdown)
                 sight(lava.level,stairdown,"Lava bubbles up the stairs!")
             else:
-                print "No stairs back down!"
+                print("No stairs back down!")
         else:
             message("The volcano erupts!")
             pass #lava's done
@@ -1264,7 +1264,7 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
                     #attempt to traverse stairs
                     targetindex = curlevel.stairs[hero.pos]
                     if targetindex not in dungeon:
-                        print "Target level ", targetindex, "does not exist."
+                        print("Target level ", targetindex, "does not exist.")
                         continue
                     targetlevel = dungeon[targetindex]
                     if targetlevel.stairdownExists(curindex):
@@ -1277,7 +1277,7 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
                         if hero.level == OUTSIDE:
                             message("You exit the dungeon.")
                     else:
-                        print "Bad stairs from level ", targetindex, " to level ", curindex
+                        print("Bad stairs from level ", targetindex, " to level ", curindex)
                         continue
                 elif TELEPORTER and vector[2]==1:
                     message("You teleport.")
@@ -1291,7 +1291,7 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
             if WIZARDKEYS:
                 TIMEFREEZE = not TIMEFREEZE
     else:
-        print "Error, illegal action."
+        print("Error, illegal action.")
         break
     hero.update()
     #Level actions
@@ -1328,7 +1328,7 @@ while(hero.alive and action != QUIT and hero.level != OUTSIDE):
                     elif yshift == 0:
                         positionRanking = [(xshift, 0), (0,0)]
                     else:
-                        print "Error in levelAction/moveMonsters/positionRanking"
+                        print("Error in levelAction/moveMonsters/positionRanking")
                 if TIMEFREEZE: positionRanking=[(0,0)]
                 for vector in positionRanking:
                     newPos=(x+vector[0], y+vector[1])
@@ -1399,5 +1399,5 @@ anykey()
 closescreen()
 
 playerScore, lavaScore = hero.state[POINT], lava.score
-print "Player got ", playerScore, " points."
-print "Lava got ", lava.score, " points."
+print("Player got ", playerScore, " points.")
+print("Lava got ", lava.score, " points.")
