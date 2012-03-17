@@ -29,7 +29,7 @@ lavaspeed = 1           # Speed at which the lava moves
 hungerturns = 400       # Number of turns before the player consumes a food
 
 programName="Volcano"
-programVersion="0.0.9 (beta)"
+programVersion="0.0.10 (beta)"
 
 # Volcano
 # 
@@ -288,7 +288,7 @@ def itemsymbol(itm):
     elif itm in itemDict:
         return itemDict[itm]
     else:
-        print("Nonexistant item: "+repr(itm))
+        print("Nonexistent item: "+repr(itm))
 
 def itemscore(item):
     if item==MAXHP:
@@ -350,10 +350,10 @@ monsterNames={}
 ZOMBIE=26
 
 monsterSymbols = {}
-for name, col in monsterDict.iteritems():
+for name, col in monsterDict.items():
     monsterSymbols[name[0]]=symbol(name[0],col)
 monsterNames = {}
-for name, col in monsterDict.iteritems():
+for name, col in monsterDict.items():
     monsterNames[name[0]]=name
 
 def monstersymbol(mon):
@@ -499,7 +499,7 @@ class level:
                     rooms.append((vl,vr,hb,ht))
             #determine corridors to draw
             connections=[]
-            roomsconnected=range(9) #list of rooms used for calculation
+            roomsconnected=list(range(9)) #list of rooms used for calculation
             roompairs=[(0,1),(1,2), #horizontal
                        (3,4),(4,5),
                        (6,7),(7,8),
@@ -690,10 +690,10 @@ class level:
         #assumes there were stairs up
         return self.cachedupstair
     def stairdownExists(self, name):
-        return name in self.stairs.itervalues()
+        return name in self.stairs.values()
     def getstairdown(self, name):
         #assumes it's actually down
-        stairset=[key for key,item in self.stairs.iteritems() if item==name]
+        stairset=[key for key,item in self.stairs.items() if item==name]
         if len(stairset)==0:
             print("No stairs down")
         elif len(stairset)==1:
@@ -1064,9 +1064,9 @@ def makeSubDungeon(dungeonplan, depth=0, up=[], dungeon={}):
     if depth == 0:
         special.append(OUTSIDE)
     else:
-        for x in xrange(9):
+        for x in range(9):
             monsters.append(monsterAtDepth(depth))
-        for x in xrange(9):
+        for x in range(9):
             items.append(itemAtDepth(depth))
     if name in gemlevels:
         items.append(GEM)
@@ -1122,7 +1122,7 @@ def lavamove():
     magmasquares = [square for square in mapPositions if lavalevel.tile(square) == MAGMA]
     if DEATHMAGMA:
         #finish the levels very fast
-        bordersquares = lavalevel.stairs.keys() + lavalevel.items.keys() + lavalevel.monsters.keys()
+        bordersquares = list(lavalevel.stairs.keys()) + list(lavalevel.items.keys()) + list(lavalevel.monsters.keys())
     else:
         bordersquares = [square for magmaSquare in magmasquares for square in mapPositions if adjacent(square,magmaSquare)]
         bordersquares = list(set(bordersquares))
