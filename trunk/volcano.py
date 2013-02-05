@@ -1,4 +1,3 @@
-
 import curses
 import curses.ascii
 import pprint
@@ -6,7 +5,7 @@ import random
 import copy
 import math
 
-DEBUG=False             # Gives extra info on the status line
+DEBUG=True             # Gives extra info on the status line
 WIZARDKEYS=False        # ? toggles omniscience, . toggles timefreeze
 OMNISCIENT=False        # See everything, hear every message
 TIMEFREEZE=False        # Lava and monsters cannot move
@@ -18,7 +17,7 @@ FORGETSEEN=False        # Don't show previously seen areas
 
 FULLVIEW=False          # LOS is complete, not within 8 squares
                         # The following are set to true _after death_ always.
-NUMBERSON=False         # Shows numbers or not.
+NUMBERSON=True         # Shows numbers or not.
                         
 DEATHVIEW=False         # True the true state of anything you've seen
 DEATHMAGMA=False        # Lava travels fast offscreen when you're dead
@@ -1207,10 +1206,10 @@ action = None
 while(hero.alive and action != QUIT and hero.level != OUTSIDE):
     printstatus()
     update()
-    clearmessage() #This is a soft clear
     
     #Hero action
     action=getAction()
+    clearmessage() #This is a soft clear
     if action==HELP:
         message(programName + " version " + programVersion)
         if WIZARDKEYS:
